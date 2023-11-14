@@ -57,7 +57,38 @@ object BondContract {
         if num == BigInt(0) then ByteString.empty
         else Builtins.consByteString(num % 256, integerToByteString(num / 256))
 
-    val xor = (a: ByteString, b: ByteString) => a
+    def xorBytes(a: BigInt, b: BigInt): BigInt = {
+        def pow(base: BigInt, exponent: BigInt): BigInt = {
+            if exponent == BigInt(0) then BigInt(1)
+            else base * pow(base, exponent - 1)
+        }
+
+        def xorHelper(a: BigInt, b: BigInt, i: BigInt, result: BigInt): BigInt = {
+            if (i < 0) result
+            else {
+                val bitA = (a / pow(2, i)) % 2
+                val bitB = (b / pow(2, i)) % 2
+                val xorBit = (bitA + bitB) % 2
+                xorHelper(a, b, i - 1, result + xorBit * pow(2, i))
+            }
+        }
+
+        xorHelper(a, b, 7, 0)
+    }
+
+    // a and b are of the same length
+    def xor(a: ByteString, b: ByteString) = {
+        def xorHelper(a: ByteString, b: ByteString, i: BigInt, result: ByteString): ByteString = {
+            if i < 0 then result
+            else {
+                val byteA = Builtins.indexByteString(a, i)
+                val byteB = Builtins.indexByteString(b, i)
+                val xorByte = xorBytes(byteA, byteB)
+                xorHelper(a, b, i - 1, Builtins.consByteString(xorByte, result))
+            }
+        }
+        xorHelper(a, b, Builtins.lengthOfByteString(a) - 1, ByteString.empty)
+    }
 
     inline def verifyMerkleInclusionProof(
         merkleProof: List[ByteString],
@@ -199,9 +230,9 @@ object BondContract {
     val htlcValidator = compiledHtlcScript.toUplc(generateErrorTraces = true)
     val htlcProgram = Program((2, 0, 0), htlcValidator)
     println(compiledBondScript.pretty.render(100))
-    println(bondProgram.doubleCborHex)
-    println(compiledHtlcScript.pretty.render(100))
-    println(htlcProgram.doubleCborHex)
+    // println(bondProgram.doubleCborHex)
+    // println(compiledHtlcScript.pretty.render(100))
+    // println(htlcProgram.doubleCborHex)
     println(s"bondProgram size: ${bondProgram.doubleCborEncoded.size}")
     println(s"htlcProgram size: ${htlcProgram.doubleCborEncoded.size}")
 }
