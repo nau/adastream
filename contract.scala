@@ -77,59 +77,84 @@ object BondContract {
         if Builtins.equalsByteString(merkleRoot, encId) then true
         else throw new Exception("M")
 
-    def bondContractValidator(datum: Data, redeemer: Data, ctxData: Data) = {
-        val config = fromData[BondConfig](datum)
-
-        fromData[FraudProof](redeemer) match
-            case FraudProof(
-                  signature,
-                  preimage,
-                  encryptedChunk,
-                  chunkHash,
-                  chunkIndex,
-                  merkleProof
-                ) =>
-                // hash( Ei ⊕ hash( preimage || i) ) ≠ Hi
-                val expectedChunkHash = Builtins.sha2_256(
-                  xor(
-                    encryptedChunk,
-                    Builtins.sha2_256(
-                      Builtins.appendByteString(preimage, integerToByteString(chunkIndex))
-                    )
+    inline def verifyFraudProof(
+        chunkHash: ByteString,
+        chunkIndex: BigInt,
+        encId: ByteString,
+        encryptedChunk: ByteString,
+        merkleProof: prelude.List[ByteString],
+        preimage: ByteString,
+        preimageHash: ByteString,
+        serverPubKey: ByteString,
+        signature: ByteString
+    ): Boolean =
+        val verifyWrongChunkHash =
+            // hash( Ei ⊕ hash( preimage || i) ) ≠ Hi
+            val expectedChunkHash = Builtins.sha2_256(
+              xor(
+                encryptedChunk,
+                Builtins.sha2_256(
+                  Builtins.appendByteString(
+                    preimage,
+                    integerToByteString(chunkIndex)
                   )
                 )
-                val verifyWrongChunkHash =
-                    if Builtins.equalsByteString(expectedChunkHash, chunkHash) then
-                        throw new Exception("H")
-                    else true
-                val verifyValidClaimSignature = {
-                    val claim = Builtins.appendByteString(config.encId, config.preimageHash)
-                    if Builtins.verifySchnorrSecp256k1Signature(
-                          config.serverPubKey,
-                          claim,
+              )
+            )
+            if Builtins.equalsByteString(expectedChunkHash, chunkHash) then throw new Exception("H")
+            else true
+        val verifyValidClaimSignature = {
+            val claim = Builtins.appendByteString(encId, preimageHash)
+            if Builtins.verifySchnorrSecp256k1Signature(
+                  serverPubKey,
+                  claim,
+                  signature
+                )
+            then true
+            else throw new Exception("S")
+        }
+        val verifyValidPreimage =
+            if Builtins.equalsByteString(
+                  preimageHash,
+                  Builtins.sha2_256(preimage)
+                )
+            then true
+            else throw new Exception("P")
+        val merkleInclusionProofValid = verifyMerkleInclusionProof(
+          merkleProof,
+          encryptedChunk,
+          chunkHash,
+          chunkIndex,
+          encId
+        )
+        verifyWrongChunkHash
+        && verifyValidClaimSignature
+        && verifyValidPreimage
+        && merkleInclusionProofValid
+
+    def bondContractValidator(datum: Data, redeemer: Data, ctxData: Data) = {
+        fromData[BondConfig](datum) match
+            case BondConfig(preimageHash, encId, serverPubKey) =>
+                fromData[FraudProof](redeemer) match
+                    case FraudProof(
+                          signature,
+                          preimage,
+                          encryptedChunk,
+                          chunkHash,
+                          chunkIndex,
+                          merkleProof
+                        ) =>
+                        verifyFraudProof(
+                          chunkHash,
+                          chunkIndex,
+                          encId,
+                          encryptedChunk,
+                          merkleProof,
+                          preimage,
+                          preimageHash,
+                          serverPubKey,
                           signature
                         )
-                    then true
-                    else throw new Exception("S")
-                }
-                val verifyValidPreimage =
-                    if Builtins.equalsByteString(
-                          config.preimageHash,
-                          Builtins.sha2_256(preimage)
-                        )
-                    then true
-                    else throw new Exception("P")
-                val merkleInclusionProofValid = verifyMerkleInclusionProof(
-                  merkleProof,
-                  encryptedChunk,
-                  chunkHash,
-                  chunkIndex,
-                  config.encId
-                )
-                verifyWrongChunkHash
-                && verifyValidClaimSignature
-                && verifyValidPreimage
-                && merkleInclusionProofValid
     }
 
     /*
