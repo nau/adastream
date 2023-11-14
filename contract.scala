@@ -1,4 +1,5 @@
 //> using scala 3.3.0
+//> using toolkit 0.2.1
 //> using plugin org.scalus:scalus-plugin_3:0.3.0
 //> using dep org.scalus:scalus_3:0.3.0
 
@@ -78,6 +79,8 @@ object BondContract {
 
     // a and b are of the same length
     def xor(a: ByteString, b: ByteString) = {
+        val l1 = Builtins.lengthOfByteString(a)
+        val l2 = Builtins.lengthOfByteString(b)
         def xorHelper(a: ByteString, b: ByteString, i: BigInt, result: ByteString): ByteString = {
             if i < 0 then result
             else {
@@ -87,7 +90,8 @@ object BondContract {
                 xorHelper(a, b, i - 1, Builtins.consByteString(xorByte, result))
             }
         }
-        xorHelper(a, b, Builtins.lengthOfByteString(a) - 1, ByteString.empty)
+        if l1 == l2 then xorHelper(a, b, l1 - 1, ByteString.empty)
+        else throw new Exception("X")
     }
 
     inline def verifyMerkleInclusionProof(
@@ -222,17 +226,18 @@ object BondContract {
         }
 }
 
-@main def main() = {
+object Bond:
     val compiledBondScript = compile(BondContract.bondContractValidator)
     val bondValidator = compiledBondScript.toUplc(generateErrorTraces = true)
     val bondProgram = Program((2, 0, 0), bondValidator)
     val compiledHtlcScript = compile(BondContract.makeHtlcContractValidator)
     val htlcValidator = compiledHtlcScript.toUplc(generateErrorTraces = true)
     val htlcProgram = Program((2, 0, 0), htlcValidator)
-    println(compiledBondScript.pretty.render(100))
-    // println(bondProgram.doubleCborHex)
-    // println(compiledHtlcScript.pretty.render(100))
-    // println(htlcProgram.doubleCborHex)
-    println(s"bondProgram size: ${bondProgram.doubleCborEncoded.size}")
-    println(s"htlcProgram size: ${htlcProgram.doubleCborEncoded.size}")
-}
+    @main def main() = {
+        println(compiledBondScript.pretty.render(100))
+        // println(bondProgram.doubleCborHex)
+        // println(compiledHtlcScript.pretty.render(100))
+        // println(htlcProgram.doubleCborHex)
+        println(s"bondProgram size: ${bondProgram.doubleCborEncoded.size}")
+        println(s"htlcProgram size: ${htlcProgram.doubleCborEncoded.size}")
+    }
