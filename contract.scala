@@ -38,6 +38,7 @@ import scalus.ledger.api.v1.POSIXTime
 import scalus.ledger.api.v1.Extended
 import scalus.uplc.FromData
 import scalus.uplc.ToData
+import java.util.Arrays
 
 @Compile
 object BondContract {
@@ -141,7 +142,7 @@ object BondContract {
             else {
                 val byteA = Builtins.indexByteString(a, i)
                 val byteB = Builtins.indexByteString(b, i)
-                val xorByte = Builtins.trace("xorBytes")(xorBytes(byteA, byteB))
+                val xorByte = xorBytes(byteA, byteB)
                 xorHelper(a, b, i - 1, Builtins.consByteString(xorByte, result))
             }
         }
@@ -160,9 +161,10 @@ object BondContract {
           Builtins.appendByteString(encryptedChunk, chunkHash)
         )
         val merkleRoot = List.foldLeft(merkleProof, encryptedChunkAndChunkHashHash) { (acc, hash) =>
-            if chunkIndex % 2 == BigInt(0) then
-                Builtins.sha2_256(Builtins.appendByteString(hash, acc))
-            else Builtins.sha2_256(Builtins.appendByteString(acc, hash))
+            Builtins.sha2_256(
+              if chunkIndex % 2 == BigInt(0) then Builtins.appendByteString(hash, acc)
+              else Builtins.appendByteString(acc, hash)
+            )
         }
         if Builtins.equalsByteString(merkleRoot, encId) then true
         else throw new Exception("M")
@@ -189,15 +191,19 @@ object BondContract {
         val verifyWrongChunkHash =
             // hash( Ei ⊕ hash( preimage || i) ) ≠ Hi
             val expectedChunkHash = Builtins.sha2_256(
-              Builtins.trace("xor")(xor(
-                encryptedChunk,
-                Builtins.trace("sha2_256")(Builtins.sha2_256(
-                  Builtins.appendByteString(
-                    preimage,
-                    Builtins.trace("integerToByteString")(integerToByteString(chunkIndex))
+              Builtins.trace("xor")(
+                xor(
+                  encryptedChunk,
+                  Builtins.trace("sha2_256")(
+                    Builtins.sha2_256(
+                      Builtins.appendByteString(
+                        preimage,
+                        Builtins.trace("integerToByteString")(integerToByteString(chunkIndex))
+                      )
+                    )
                   )
-                ))
-              ))
+                )
+              )
             )
             if Builtins.equalsByteString(expectedChunkHash, chunkHash) then throw new Exception("H")
             else true
@@ -214,9 +220,9 @@ object BondContract {
         }
         Builtins.trace("verifyValidClaimSignature")(true)
 
-        // val verifyValidPreimage = verifyPreimage(preimage, preimageHash)
+        val verifyValidPreimage = verifyPreimage(preimage, preimageHash)
         Builtins.trace("verifyValidPreimage")(true)
-        /*
+
         val merkleInclusionProofValid = verifyMerkleInclusionProof(
           merkleProof,
           encryptedChunk,
@@ -227,14 +233,13 @@ object BondContract {
         verifyWrongChunkHash
         && verifyValidClaimSignature
         && verifyValidPreimage
-        && merkleInclusionProofValid */
-        // verifyValidPreimage
+        && merkleInclusionProofValid
 
     def bondContractValidator(datum: Data, redeemer: Data, ctxData: Data) = {
-      fromData[BondConfig](datum) match
-        case BondConfig(preimageHash, encId, serverPubKey, serverPkh) =>
-          val a = Builtins.trace("fromData[BondConfig]")(true)
-          fromData[BondAction](redeemer) match
+        fromData[BondConfig](datum) match
+            case BondConfig(preimageHash, encId, serverPubKey, serverPkh) =>
+                val a = Builtins.trace("fromData[BondConfig]")(true)
+                fromData[BondAction](redeemer) match
                     case BondAction.Withdraw(preimage) =>
                         val a = Builtins.trace("BondAction.Withdraw(preimage)")(true)
                         val signatories = fieldAsData[ScriptContext](_.txInfo.signatories)(ctxData)
@@ -299,6 +304,23 @@ object BondContract {
             }
             if validPreimage || expired then () else throw new Exception()
         }
+}
+
+object Helpers {
+  def merkleTreeRoot(elements: Array[ByteString]): ByteString = {
+    def loop(elements: Array[ByteString]): ByteString = {
+      if elements.length == 1 then elements(0)
+      else {
+        val newElements = elements.grouped(2).map { group =>
+          val bytes = if group.length == 1 then Utils.sha2_256(group(0).bytes ++ group(0).bytes)
+          else Utils.sha2_256(group(0).bytes ++ group(1).bytes)
+          ByteString.unsafeFromArray(bytes)
+        }.toArray
+        loop(newElements)
+      }
+    }
+    loop(elements)
+  }
 }
 
 object Bond:

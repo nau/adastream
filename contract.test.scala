@@ -52,13 +52,15 @@ class ContractTests extends munit.ScalaCheckSuite {
         asymmetricCipherKeyPair.getPublic().asInstanceOf[Ed25519PublicKeyParameters];
 
     val preimage = ByteString.fromString("preimage")
-    val hash = ByteString.unsafeFromArray(Utils.sha2_256(preimage.bytes))
-    val encId = ByteString.unsafeFromArray(Utils.sha2_256("encId".getBytes))
+    val preimageHash = ByteString.unsafeFromArray(Utils.sha2_256(preimage.bytes))
+    val encryptedChunk = ByteString.fromArray(Utils.sha2_256("encryptedChunk".getBytes))
+    val chunkHash = ByteString.fromArray(Utils.sha2_256("chunkHash".getBytes))
+    val encId = Helpers.merkleTreeRoot(Array(encryptedChunk, chunkHash))
     val bondConfig = BondConfig(
-      hash,
+      preimageHash,
       encId,
       ByteString.fromArray(publicKey.getEncoded()),
-      ByteString.fromArray(blake2b224Hash(publicKey.getEncoded())),
+      ByteString.fromArray(blake2b224Hash(publicKey.getEncoded()))
     )
 
     test(s"bondProgram size is ${Bond.bondProgram.doubleCborEncoded.size}".ignore) {
@@ -113,19 +115,18 @@ class ContractTests extends munit.ScalaCheckSuite {
         }
     }
 
-    test("Client can spend with valid fraud proof".only) {
+    test("Client can spend with valid fraud proof") {
         val claim = Builtins.appendByteString(bondConfig.encId, bondConfig.preimageHash)
         val signer = new Ed25519Signer();
         signer.init(true, privateKey);
         signer.update(claim.bytes, 0, claim.bytes.length);
         val signature = ByteString.fromArray(signer.generateSignature())
-        println(s"pk: ${bondConfig.serverPubKey} message: ${claim} signature: ${signature}")
         val action =
             BondAction.FraudProof(
               signature = signature,
               preimage = preimage,
-              encryptedChunk = ByteString.fromArray(Utils.sha2_256("encryptedChunk".getBytes)),
-              chunkHash = ByteString.fromArray(Utils.sha2_256("chunkHash".getBytes)),
+              encryptedChunk = encryptedChunk,
+              chunkHash = chunkHash,
               chunkIndex = 0,
               merkleProof = scalus.prelude.List.empty
             )
