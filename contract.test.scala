@@ -40,4 +40,13 @@ class ContractTests extends munit.ScalaCheckSuite {
             BigInt.apply(bs3, 16) == (bi1 ^ bi2)
         }
     }
+
+    property("integerToByteString is correct") {
+        forAll { (n: Int) =>
+            val positive = n & 0x7fffffff
+            val bs = BondContract.integerToByteString(positive)
+            val bi = BigInt.apply(bs.toHex, 16)
+            bi == positive
+        }
+    }
 }

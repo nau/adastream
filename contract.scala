@@ -66,8 +66,13 @@ object BondContract {
     }
 
     def integerToByteString(num: BigInt): ByteString =
-        if num == BigInt(0) then ByteString.empty
-        else Builtins.consByteString(num % 256, integerToByteString(num / 256))
+        def loop(div: BigInt, result: ByteString): ByteString = {
+            val shifted = num / div
+            val newResult = Builtins.consByteString(shifted % 256, result)
+            if shifted == BigInt(0) then newResult
+            else loop(div * 256, newResult)
+        }
+        loop(1, ByteString.empty)
 
     def xorBytes(a: BigInt, b: BigInt): BigInt = {
         def pow(base: BigInt, exponent: BigInt): BigInt = {
