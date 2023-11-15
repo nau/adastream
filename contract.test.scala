@@ -35,11 +35,11 @@ class ContractTests extends munit.ScalaCheckSuite {
     val preimage = ByteString.fromString("preimage")
     val hash = ByteString.unsafeFromArray(Utils.sha2_256(preimage.bytes))
     val bondConfig = BondConfig(
-          hash,
-          ByteString.empty,
-          ByteString.empty,
-          ByteString.fromString("Server PubKeyHash")
-        )
+      hash,
+      ByteString.empty,
+      ByteString.empty,
+      ByteString.fromString("Server PubKeyHash")
+    )
 
     test("Server can withdraw with valid preimage and signature") {
         val withdraw = BondAction.Withdraw(ByteString.fromString("preimage"))
@@ -57,6 +57,31 @@ class ContractTests extends munit.ScalaCheckSuite {
     test("Server can't withdraw without a signature") {
         val withdraw = BondAction.Withdraw(preimage)
         evalBondValidator(bondConfig, withdraw, scalus.prelude.List.empty) {
+            case UplcEvalResult.Success(term)                 => fail(s"should fail")
+            case UplcEvalResult.UplcFailure(errorCode, error) =>
+        }
+    }
+
+    test("Server can't withdraw with a wrong signature") {
+        val withdraw = BondAction.Withdraw(preimage)
+        evalBondValidator(
+          bondConfig,
+          withdraw,
+          scalus.prelude.List(PubKeyHash(ByteString.fromString("wrong")))
+        ) {
+            case UplcEvalResult.Success(term)                 => fail(s"should fail")
+            case UplcEvalResult.UplcFailure(errorCode, error) =>
+        }
+    }
+
+    test("Server can't withdraw with a wrong preimage") {
+        val withdraw =
+            BondAction.Withdraw(Builtins.appendByteString(preimage, ByteString.fromString("wrong")))
+        evalBondValidator(
+          bondConfig,
+          withdraw,
+          scalus.prelude.List(PubKeyHash(bondConfig.serverPkh))
+        ) {
             case UplcEvalResult.Success(term)                 => fail(s"should fail")
             case UplcEvalResult.UplcFailure(errorCode, error) =>
         }
