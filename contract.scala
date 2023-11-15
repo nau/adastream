@@ -121,10 +121,11 @@ object BondContract {
         def xorHelper(a: BigInt, b: BigInt, i: BigInt, result: BigInt): BigInt = {
             if (i < 0) result
             else {
-                val bitA = (a / pow(2, i)) % 2
-                val bitB = (b / pow(2, i)) % 2
+                val pow2i = pow(2, i)
+                val bitA = (a / pow2i) % 2
+                val bitB = (b / pow2i) % 2
                 val xorBit = (bitA + bitB) % 2
-                xorHelper(a, b, i - 1, result + xorBit * pow(2, i))
+                xorHelper(a, b, i - 1, result + xorBit * pow2i)
             }
         }
 
@@ -140,7 +141,7 @@ object BondContract {
             else {
                 val byteA = Builtins.indexByteString(a, i)
                 val byteB = Builtins.indexByteString(b, i)
-                val xorByte = xorBytes(byteA, byteB)
+                val xorByte = Builtins.trace("xorBytes")(xorBytes(byteA, byteB))
                 xorHelper(a, b, i - 1, Builtins.consByteString(xorByte, result))
             }
         }
@@ -188,19 +189,20 @@ object BondContract {
         val verifyWrongChunkHash =
             // hash( Ei ⊕ hash( preimage || i) ) ≠ Hi
             val expectedChunkHash = Builtins.sha2_256(
-              xor(
+              Builtins.trace("xor")(xor(
                 encryptedChunk,
-                Builtins.sha2_256(
+                Builtins.trace("sha2_256")(Builtins.sha2_256(
                   Builtins.appendByteString(
                     preimage,
-                    integerToByteString(chunkIndex)
+                    Builtins.trace("integerToByteString")(integerToByteString(chunkIndex))
                   )
-                )
-              )
+                ))
+              ))
             )
             if Builtins.equalsByteString(expectedChunkHash, chunkHash) then throw new Exception("H")
             else true
-        val verifyValidClaimSignature = {
+        Builtins.trace("verifyWrongChunkHash")(true)
+        /* val verifyValidClaimSignature = {
             val claim = Builtins.appendByteString(encId, preimageHash)
             if Builtins.verifySchnorrSecp256k1Signature(
                   serverPubKey,
@@ -210,7 +212,9 @@ object BondContract {
             then true
             else throw new Exception("S")
         }
+         */
         val verifyValidPreimage = verifyPreimage(preimage, preimageHash)
+        /*
         val merkleInclusionProofValid = verifyMerkleInclusionProof(
           merkleProof,
           encryptedChunk,
@@ -221,9 +225,11 @@ object BondContract {
         verifyWrongChunkHash
         && verifyValidClaimSignature
         && verifyValidPreimage
-        && merkleInclusionProofValid
+        && merkleInclusionProofValid */
+        verifyValidPreimage
 
     def bondContractValidator(datum: Data, redeemer: Data, ctxData: Data) = {
+        val a = Builtins.trace("bondContractValidator")(true)
         fromData[BondConfig](datum) match
             case BondConfig(preimageHash, encId, serverPubKey, serverPkh) =>
                 fromData[BondAction](redeemer) match

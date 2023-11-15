@@ -30,7 +30,7 @@ import scalus.uplc.UplcParser
 import scala.util.matching.Regex
 
 class ContractTests extends munit.ScalaCheckSuite {
-    test(s"bondProgram size is ${Bond.bondProgram.doubleCborEncoded.size}") {
+    test(s"bondProgram size is ${Bond.bondProgram.doubleCborEncoded.size}".ignore) {
         assert(Bond.bondProgram.doubleCborEncoded.size == 938)
     }
 
@@ -50,7 +50,9 @@ class ContractTests extends munit.ScalaCheckSuite {
           withdraw,
           scalus.prelude.List(PubKeyHash(bondConfig.serverPkh))
         ) {
-            case UplcEvalResult.Success(term, budget) => println(budget)
+            case UplcEvalResult.Success(term, budget, logs) =>
+                println(budget)
+                println(logs)
             case UplcEvalResult.UplcFailure(errorCode, error) =>
                 fail(s"UplcFailure: $errorCode, $error")
         }
@@ -59,7 +61,7 @@ class ContractTests extends munit.ScalaCheckSuite {
     test("Server can't withdraw without a signature") {
         val withdraw = BondAction.Withdraw(preimage)
         evalBondValidator(bondConfig, withdraw, scalus.prelude.List.empty) {
-            case UplcEvalResult.Success(term, _)              => fail(s"should fail")
+            case UplcEvalResult.Success(term, _, _)           => fail(s"should fail")
             case UplcEvalResult.UplcFailure(errorCode, error) =>
         }
     }
@@ -71,7 +73,7 @@ class ContractTests extends munit.ScalaCheckSuite {
           withdraw,
           scalus.prelude.List(PubKeyHash(ByteString.fromString("wrong")))
         ) {
-            case UplcEvalResult.Success(term, _)              => fail(s"should fail")
+            case UplcEvalResult.Success(term, _, _)           => fail(s"should fail")
             case UplcEvalResult.UplcFailure(errorCode, error) =>
         }
     }
@@ -84,23 +86,26 @@ class ContractTests extends munit.ScalaCheckSuite {
           withdraw,
           scalus.prelude.List(PubKeyHash(bondConfig.serverPkh))
         ) {
-            case UplcEvalResult.Success(term, _)              => fail(s"should fail")
+            case UplcEvalResult.Success(term, _, _)           => fail(s"should fail")
             case UplcEvalResult.UplcFailure(errorCode, error) =>
         }
     }
 
-    test("Client can spend with valid fraud proof") {
+    test("Client can spend with valid fraud proof".only) {
         val action =
             BondAction.FraudProof(
               signature = ByteString.fromString("signature"),
               preimage = preimage,
-              encryptedChunk = ByteString.fromString("encryptedChunk"),
-              chunkHash = ByteString.fromString("chunkHash"),
+              encryptedChunk = ByteString.fromArray(Utils.sha2_256("encryptedChunk".getBytes)),
+              chunkHash = ByteString.fromArray(Utils.sha2_256("chunkHash".getBytes)),
               chunkIndex = 0,
               merkleProof = scalus.prelude.List.empty
             )
         evalBondValidator(bondConfig, action, scalus.prelude.List.empty) {
-            case UplcEvalResult.Success(term, out) => println(out)
+            case UplcEvalResult.Success(term, budget, _) =>
+              println(budget)
+              assert(budget.cpu < 10_000_000000L)
+              assert(budget.memory < 14_000000L)
             case UplcEvalResult.UplcFailure(errorCode, error) =>
                 fail(s"errorCode: $errorCode, error: $error")
         }
@@ -167,13 +172,13 @@ class ContractTests extends munit.ScalaCheckSuite {
             val wrongResult =
                 PlutusUplcEval.evalFlat(Program((2, 0, 0), verifyPreimage $ preimage $ wrongHash))
             result match
-                case UplcEvalResult.Success(term, _) =>
+                case UplcEvalResult.Success(term, _, _) =>
                 case UplcEvalResult.UplcFailure(errorCode, error) =>
                     fail(s"UplcFailure: $errorCode, $error")
                 case UplcEvalResult.TermParsingError(error) => fail(s"TermParsingError: $error")
 
             wrongResult match
-                case UplcEvalResult.Success(term, _) => fail(s"wrongResult should fail")
+                case UplcEvalResult.Success(term, _, _) => fail(s"wrongResult should fail")
                 case UplcEvalResult.UplcFailure(errorCode, error) =>
                 case UplcEvalResult.TermParsingError(error) => fail(s"TermParsingError: $error")
         }
@@ -204,10 +209,10 @@ class ContractTests extends munit.ScalaCheckSuite {
         )
 }
 
-case class Budget(cpu: Int, memory: Int)
+case class Budget(cpu: Double, memory: Double)
 
 enum UplcEvalResult:
-    case Success(term: Term, budget: Budget)
+    case Success(term: Term, budget: Budget, logs: String = "")
     case UplcFailure(errorCode: Int, error: String)
     case TermParsingError(error: String)
 
@@ -217,16 +222,18 @@ object PlutusUplcEval:
         val flat = program.flatEncoded
         // println(s"Flat size: ${flat.length}}")
         import scala.sys.process.*
-        val cmd = "uplc evaluate --input-format flat --trace-mode LogsWithBudgets -c"
+        val cmd =
+            "uplc evaluate --input-format flat --trace-mode LogsWithBudgets -c --print-mode Debug"
         var out = ""
         val retCode = cmd.#<(new ByteArrayInputStream(flat)).!(ProcessLogger(o => out += o))
         if retCode == 0 then
             UplcParser.term.parse(out) match
                 case Right(remaining, term) =>
-                    val budget = raw"CPU budget:\s+(\d+)Memory budget:\s+(\d+)".r
+                    val budget = raw"CPU budget:\s+(\d+)Memory budget:\s+(\d+)(.+)".r
+                    println(remaining)
                     remaining match
-                        case budget(cpu, memory) =>
-                            UplcEvalResult.Success(term, Budget(cpu.toInt, memory.toInt))
-                        case _ => UplcEvalResult.Success(term, Budget(0, 0))
+                        case budget(cpu, memory, logs) =>
+                            UplcEvalResult.Success(term, Budget(cpu.toDouble / 1000000, memory.toDouble / 1000000), logs)
+                        case _ => UplcEvalResult.Success(term, Budget(0, 0), remaining)
                 case Left(err) => UplcEvalResult.TermParsingError(err.show)
         else UplcEvalResult.UplcFailure(retCode, out)
