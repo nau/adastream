@@ -41,18 +41,29 @@ import scalus.uplc.FromData
 object BondContract {
     import List.*
 
-    case class BondConfig(preimageHash: ByteString, encId: ByteString, serverPubKey: ByteString)
-    case class FraudProof(
-        signature: ByteString,
-        preimage: ByteString,
-        encryptedChunk: ByteString,
-        chunkHash: ByteString,
-        chunkIndex: BigInt,
-        merkleProof: List[ByteString]
+    case class BondConfig(
+        preimageHash: ByteString,
+        encId: ByteString,
+        serverPubKey: ByteString,
+        serverPkh: ByteString
     )
 
+    enum BondAction:
+        case Withdraw(preimage: ByteString)
+        case FraudProof(
+            signature: ByteString,
+            preimage: ByteString,
+            encryptedChunk: ByteString,
+            chunkHash: ByteString,
+            chunkIndex: BigInt,
+            merkleProof: List[ByteString]
+        )
+
     given FromData[BondConfig] = FromData.deriveCaseClass
-    given FromData[FraudProof] = FromData.deriveCaseClass
+    given FromData[BondAction] = FromData.deriveEnum {
+        case 0 => FromData.deriveConstructor[BondAction.Withdraw]
+        case 1 => FromData.deriveConstructor[BondAction.FraudProof]
+    }
 
     def integerToByteString(num: BigInt): ByteString =
         if num == BigInt(0) then ByteString.empty
@@ -112,6 +123,14 @@ object BondContract {
         if Builtins.equalsByteString(merkleRoot, encId) then true
         else throw new Exception("M")
 
+    def verifyPreimage(preimage: ByteString, preimageHash: ByteString): Boolean =
+        if Builtins.equalsByteString(
+              preimageHash,
+              Builtins.sha2_256(preimage)
+            )
+        then true
+        else throw new Exception("P")
+
     inline def verifyFraudProof(
         chunkHash: ByteString,
         chunkIndex: BigInt,
@@ -148,13 +167,7 @@ object BondContract {
             then true
             else throw new Exception("S")
         }
-        val verifyValidPreimage =
-            if Builtins.equalsByteString(
-                  preimageHash,
-                  Builtins.sha2_256(preimage)
-                )
-            then true
-            else throw new Exception("P")
+        val verifyValidPreimage = verifyPreimage(preimage, preimageHash)
         val merkleInclusionProofValid = verifyMerkleInclusionProof(
           merkleProof,
           encryptedChunk,
@@ -169,9 +182,18 @@ object BondContract {
 
     def bondContractValidator(datum: Data, redeemer: Data, ctxData: Data) = {
         fromData[BondConfig](datum) match
-            case BondConfig(preimageHash, encId, serverPubKey) =>
-                fromData[FraudProof](redeemer) match
-                    case FraudProof(
+            case BondConfig(preimageHash, encId, serverPubKey, serverPkh) =>
+                fromData[BondAction](redeemer) match
+                    case BondAction.Withdraw(preimage) =>
+                        val signatories = fieldAsData[ScriptContext](_.txInfo.signatories)(ctxData)
+                        val pkh =
+                            Builtins.unsafeDataAsB(Builtins.unsafeDataAsList(signatories).head)
+                        val verifySignature =
+                            if Builtins.equalsByteString(pkh, serverPkh) then true
+                            else throw new Exception("W")
+                        val verifyValidPreimage = verifyPreimage(preimage, preimageHash)
+                        verifySignature && verifyValidPreimage
+                    case BondAction.FraudProof(
                           signature,
                           preimage,
                           encryptedChunk,
