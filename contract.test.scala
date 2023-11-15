@@ -10,11 +10,15 @@ import org.scalacheck.Prop.*
 import scalus.builtins.ByteString
 import org.scalacheck.Gen
 import org.scalacheck.Arbitrary
+import scalus.builtins.Builtins
+import scalus.utils.Utils
+import scalus.uplc.PlutusUplcEval
+import scalus.uplc.Program
+import scalus.uplc.UplcEvalResult
 
 class ContractTests extends munit.ScalaCheckSuite {
-    test("foo") {
-        println(s"bondProgram size: ${Bond.bondProgram.doubleCborEncoded.size}")
-        assert(2 + 2 == 4)
+    test(s"bondProgram size is ${Bond.bondProgram.doubleCborEncoded.size}") {
+        assert(Bond.bondProgram.doubleCborEncoded.size == 938)
     }
 
     property("BondContract.xorBytes is the same as BigInt.xor") {
@@ -47,6 +51,32 @@ class ContractTests extends munit.ScalaCheckSuite {
             val bs = BondContract.integerToByteString(positive)
             val bi = BigInt.apply(bs.toHex, 16)
             bi == positive
+        }
+    }
+
+    property("verifyPreimage is correct") {
+        import scalus.toUplc
+        import scalus.uplc.TermDSL.{*, given}
+        val verifyPreimage =
+            scalus.Compiler.compile(BondContract.verifyPreimage).toUplc(generateErrorTraces = true)
+        forAll { (bytes: Array[Byte]) =>
+            val preimage = ByteString.unsafeFromArray(bytes)
+            val hash = ByteString.unsafeFromArray(Utils.sha2_256(bytes))
+            val wrongHash = ByteString.unsafeFromArray(Utils.sha2_256(bytes ++ Array(0.toByte)))
+            val result =
+                PlutusUplcEval.evalFlat(Program((2, 0, 0), verifyPreimage $ preimage $ hash))
+            val wrongResult =
+                PlutusUplcEval.evalFlat(Program((2, 0, 0), verifyPreimage $ preimage $ wrongHash))
+            result match
+                case UplcEvalResult.Success(term) =>
+                case UplcEvalResult.UplcFailure(errorCode, error) =>
+                    fail(s"UplcFailure: $errorCode, $error")
+                case UplcEvalResult.TermParsingError(error) => fail(s"TermParsingError: $error")
+
+            wrongResult match
+                case UplcEvalResult.Success(term) => fail(s"wrongResult should fail")
+                case UplcEvalResult.UplcFailure(errorCode, error) =>
+                case UplcEvalResult.TermParsingError(error) => fail(s"TermParsingError: $error")
         }
     }
 }
