@@ -3,6 +3,8 @@
 //> using test.dep org.scalameta::munit-scalacheck::1.0.0-M10
 //> using test.dep org.scalacheck::scalacheck::1.17.0
 //> using dep org.scalus:scalus_3:0.3.0
+//> using dep org.bouncycastle:bcprov-jdk18on:1.76
+//> using dep com.bloxbean.cardano:cardano-client-lib:0.5.0
 
 package adastream
 
@@ -28,20 +30,40 @@ import scalus.ledger.api.v1.PubKeyHash
 import scalus.uplc.Term
 import scalus.uplc.UplcParser
 import scala.util.matching.Regex
+import java.security.SecureRandom
+import org.bouncycastle.crypto.generators.Ed25519KeyPairGenerator
+import org.bouncycastle.crypto.params.Ed25519KeyGenerationParameters
+import org.bouncycastle.crypto.params.Ed25519PrivateKeyParameters
+import org.bouncycastle.crypto.params.Ed25519PublicKeyParameters
+import org.bouncycastle.crypto.signers.Ed25519Signer
+import java.nio.charset.StandardCharsets
+import com.bloxbean.cardano.client.crypto.api.impl.EdDSASigningProvider
+import org.bouncycastle.crypto.digests.Blake2bDigest
 
 class ContractTests extends munit.ScalaCheckSuite {
-    test(s"bondProgram size is ${Bond.bondProgram.doubleCborEncoded.size}".ignore) {
-        assert(Bond.bondProgram.doubleCborEncoded.size == 938)
-    }
+    // generate ed25519 keys
+    val RANDOM = new SecureRandom();
+    val keyPairGenerator = new Ed25519KeyPairGenerator();
+    keyPairGenerator.init(new Ed25519KeyGenerationParameters(RANDOM));
+    val asymmetricCipherKeyPair = keyPairGenerator.generateKeyPair();
+    val privateKey =
+        asymmetricCipherKeyPair.getPrivate().asInstanceOf[Ed25519PrivateKeyParameters];
+    val publicKey =
+        asymmetricCipherKeyPair.getPublic().asInstanceOf[Ed25519PublicKeyParameters];
 
     val preimage = ByteString.fromString("preimage")
     val hash = ByteString.unsafeFromArray(Utils.sha2_256(preimage.bytes))
+    val encId = ByteString.unsafeFromArray(Utils.sha2_256("encId".getBytes))
     val bondConfig = BondConfig(
       hash,
-      ByteString.empty,
-      ByteString.empty,
-      ByteString.fromString("Server PubKeyHash")
+      encId,
+      ByteString.fromArray(publicKey.getEncoded()),
+      ByteString.fromArray(blake2b224Hash(publicKey.getEncoded())),
     )
+
+    test(s"bondProgram size is ${Bond.bondProgram.doubleCborEncoded.size}".ignore) {
+        assert(Bond.bondProgram.doubleCborEncoded.size == 938)
+    }
 
     test("Server can withdraw with valid preimage and signature") {
         val withdraw = BondAction.Withdraw(ByteString.fromString("preimage"))
@@ -92,9 +114,15 @@ class ContractTests extends munit.ScalaCheckSuite {
     }
 
     test("Client can spend with valid fraud proof".only) {
+        val claim = Builtins.appendByteString(bondConfig.encId, bondConfig.preimageHash)
+        val signer = new Ed25519Signer();
+        signer.init(true, privateKey);
+        signer.update(claim.bytes, 0, claim.bytes.length);
+        val signature = ByteString.fromArray(signer.generateSignature())
+        println(s"pk: ${bondConfig.serverPubKey} message: ${claim} signature: ${signature}")
         val action =
             BondAction.FraudProof(
-              signature = ByteString.fromString("signature"),
+              signature = signature,
               preimage = preimage,
               encryptedChunk = ByteString.fromArray(Utils.sha2_256("encryptedChunk".getBytes)),
               chunkHash = ByteString.fromArray(Utils.sha2_256("chunkHash".getBytes)),
@@ -103,9 +131,9 @@ class ContractTests extends munit.ScalaCheckSuite {
             )
         evalBondValidator(bondConfig, action, scalus.prelude.List.empty) {
             case UplcEvalResult.Success(term, budget, _) =>
-              println(budget)
-              assert(budget.cpu < 10_000_000000L)
-              assert(budget.memory < 14_000000L)
+                println(budget)
+                assert(budget.cpu < 10_000_000000L)
+                assert(budget.memory < 14_000000L)
             case UplcEvalResult.UplcFailure(errorCode, error) =>
                 fail(s"errorCode: $errorCode, error: $error")
         }
@@ -207,6 +235,14 @@ class ContractTests extends munit.ScalaCheckSuite {
             )
           )
         )
+
+    def blake2b224Hash(data: Array[Byte]): Array[Byte] = {
+        val digest = new Blake2bDigest(224) // 224 bits
+        digest.update(data, 0, data.length)
+        val hash = new Array[Byte](digest.getDigestSize)
+        digest.doFinal(hash, 0)
+        hash
+    }
 }
 
 case class Budget(cpu: Double, memory: Double)
@@ -233,7 +269,11 @@ object PlutusUplcEval:
                     println(remaining)
                     remaining match
                         case budget(cpu, memory, logs) =>
-                            UplcEvalResult.Success(term, Budget(cpu.toDouble / 1000000, memory.toDouble / 1000000), logs)
+                            UplcEvalResult.Success(
+                              term,
+                              Budget(cpu.toDouble / 1000000, memory.toDouble / 1000000),
+                              logs
+                            )
                         case _ => UplcEvalResult.Success(term, Budget(0, 0), remaining)
                 case Left(err) => UplcEvalResult.TermParsingError(err.show)
         else UplcEvalResult.UplcFailure(retCode, out)

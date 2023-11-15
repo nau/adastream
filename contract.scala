@@ -202,9 +202,9 @@ object BondContract {
             if Builtins.equalsByteString(expectedChunkHash, chunkHash) then throw new Exception("H")
             else true
         Builtins.trace("verifyWrongChunkHash")(true)
-        /* val verifyValidClaimSignature = {
+        val verifyValidClaimSignature = {
             val claim = Builtins.appendByteString(encId, preimageHash)
-            if Builtins.verifySchnorrSecp256k1Signature(
+            if Builtins.verifyEd25519Signature(
                   serverPubKey,
                   claim,
                   signature
@@ -212,8 +212,10 @@ object BondContract {
             then true
             else throw new Exception("S")
         }
-         */
-        val verifyValidPreimage = verifyPreimage(preimage, preimageHash)
+        Builtins.trace("verifyValidClaimSignature")(true)
+
+        // val verifyValidPreimage = verifyPreimage(preimage, preimageHash)
+        Builtins.trace("verifyValidPreimage")(true)
         /*
         val merkleInclusionProofValid = verifyMerkleInclusionProof(
           merkleProof,
@@ -226,14 +228,15 @@ object BondContract {
         && verifyValidClaimSignature
         && verifyValidPreimage
         && merkleInclusionProofValid */
-        verifyValidPreimage
+        // verifyValidPreimage
 
     def bondContractValidator(datum: Data, redeemer: Data, ctxData: Data) = {
-        val a = Builtins.trace("bondContractValidator")(true)
-        fromData[BondConfig](datum) match
-            case BondConfig(preimageHash, encId, serverPubKey, serverPkh) =>
-                fromData[BondAction](redeemer) match
+      fromData[BondConfig](datum) match
+        case BondConfig(preimageHash, encId, serverPubKey, serverPkh) =>
+          val a = Builtins.trace("fromData[BondConfig]")(true)
+          fromData[BondAction](redeemer) match
                     case BondAction.Withdraw(preimage) =>
+                        val a = Builtins.trace("BondAction.Withdraw(preimage)")(true)
                         val signatories = fieldAsData[ScriptContext](_.txInfo.signatories)(ctxData)
                         val pkh =
                             Builtins.unsafeDataAsB(Builtins.unsafeDataAsList(signatories).head)
@@ -250,6 +253,7 @@ object BondContract {
                           chunkIndex,
                           merkleProof
                         ) =>
+                        val a = Builtins.trace("BondAction.FraudProof")(true)
                         verifyFraudProof(
                           chunkHash,
                           chunkIndex,
