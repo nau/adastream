@@ -11,14 +11,71 @@ import scalus.builtins.ByteString
 import org.scalacheck.Gen
 import org.scalacheck.Arbitrary
 import scalus.builtins.Builtins
+import scalus.toUplc
+import scalus.uplc.Data.toData
 import scalus.utils.Utils
 import scalus.uplc.PlutusUplcEval
 import scalus.uplc.Program
+import scalus.uplc.TermDSL.{*, given}
 import scalus.uplc.UplcEvalResult
+import scalus.uplc.ToDataInstances.given
+import scalus.ledger.api.v2.ToDataInstances.given
+import adastream.BondContract.BondConfig
+import adastream.BondContract.BondAction
+import scalus.ledger.api.v1.PubKeyHash
+import scalus.ledger.api.v2.*
+import scalus.builtins.ByteString.StringInterpolators
+import scalus.ledger.api.v1.PubKeyHash
 
 class ContractTests extends munit.ScalaCheckSuite {
     test(s"bondProgram size is ${Bond.bondProgram.doubleCborEncoded.size}") {
         assert(Bond.bondProgram.doubleCborEncoded.size == 938)
+    }
+
+    val preimage = ByteString.fromString("preimage")
+    val hash = ByteString.unsafeFromArray(Utils.sha2_256(preimage.bytes))
+    val bondConfig = BondConfig(
+          hash,
+          ByteString.empty,
+          ByteString.empty,
+          ByteString.fromString("Server PubKeyHash")
+        )
+
+    test("Server can withdraw with valid preimage and signature") {
+        val withdraw = BondAction.Withdraw(ByteString.fromString("preimage"))
+        evalBondValidator(
+          bondConfig,
+          withdraw,
+          scalus.prelude.List(PubKeyHash(bondConfig.serverPkh))
+        ) {
+            case UplcEvalResult.Success(term) =>
+            case UplcEvalResult.UplcFailure(errorCode, error) =>
+                fail(s"UplcFailure: $errorCode, $error")
+        }
+    }
+
+    test("Server can't withdraw without a signature") {
+        val withdraw = BondAction.Withdraw(preimage)
+        evalBondValidator(bondConfig, withdraw, scalus.prelude.List.empty) {
+            case UplcEvalResult.Success(term)                 => fail(s"should fail")
+            case UplcEvalResult.UplcFailure(errorCode, error) =>
+        }
+    }
+
+    def evalBondValidator(
+        bondConfig: BondConfig,
+        withdraw: BondAction,
+        signatures: scalus.prelude.List[PubKeyHash]
+    )(pf: PartialFunction[UplcEvalResult, Any]) = {
+        val scriptContext = makeScriptContext(signatures)
+        val term =
+            Bond.bondValidator $ bondConfig.toData $ withdraw.toData $ makeScriptContext(
+              signatures
+            ).toData
+        val result = PlutusUplcEval.evalFlat(Program((2, 0, 0), term))
+        result match
+            case UplcEvalResult.TermParsingError(error) => fail(s"TermParsingError: $error")
+            case other                                  => pf(other)
     }
 
     property("BondContract.xorBytes is the same as BigInt.xor") {
@@ -55,8 +112,6 @@ class ContractTests extends munit.ScalaCheckSuite {
     }
 
     property("verifyPreimage is correct") {
-        import scalus.toUplc
-        import scalus.uplc.TermDSL.{*, given}
         val verifyPreimage =
             scalus.Compiler.compile(BondContract.verifyPreimage).toUplc(generateErrorTraces = true)
         forAll { (bytes: Array[Byte]) =>
@@ -79,4 +134,28 @@ class ContractTests extends munit.ScalaCheckSuite {
                 case UplcEvalResult.TermParsingError(error) => fail(s"TermParsingError: $error")
         }
     }
+
+    def makeScriptContext(signatories: scalus.prelude.List[PubKeyHash]) =
+        ScriptContext(
+          TxInfo(
+            inputs = scalus.prelude.List.Nil,
+            referenceInputs = scalus.prelude.List.Nil,
+            outputs = scalus.prelude.List.Nil,
+            fee = Value.lovelace(BigInt("188021")),
+            mint = Value.zero,
+            dcert = scalus.prelude.List.Nil,
+            withdrawals = scalus.prelude.AssocMap.empty,
+            validRange = Interval.always,
+            signatories = signatories,
+            redeemers = scalus.prelude.AssocMap.empty,
+            data = scalus.prelude.AssocMap.empty,
+            id = TxId(hex"1e0612fbd127baddfcd555706de96b46c4d4363ac78c73ab4dee6e6a7bf61fe9")
+          ),
+          ScriptPurpose.Spending(
+            TxOutRef(
+              TxId(hex"1ab6879fc08345f51dc9571ac4f530bf8673e0d798758c470f9af6f98e2f3982"),
+              0
+            )
+          )
+        )
 }

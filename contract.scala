@@ -26,16 +26,18 @@ import scalus.sir.SIR
 import scalus.sir.SimpleSirToUplcLowering
 import scalus.uplc.Cek
 import scalus.uplc.Data
-import scalus.uplc.Data.FromData
-import scalus.uplc.Data.fromData
+import scalus.uplc.Data.{FromData, ToData}
+import scalus.uplc.Data.{fromData, toData}
 import scalus.uplc.Program
 import scalus.uplc.ProgramFlatCodec
 import scalus.uplc.FromDataInstances.given
+import scalus.uplc.ToDataInstances.given
 import scalus.uplc.Term
 import scalus.utils.Utils
 import scalus.ledger.api.v1.POSIXTime
 import scalus.ledger.api.v1.Extended
 import scalus.uplc.FromData
+import scalus.uplc.ToData
 
 @Compile
 object BondContract {
@@ -60,10 +62,46 @@ object BondContract {
         )
 
     given FromData[BondConfig] = FromData.deriveCaseClass
+    given ToData[BondConfig] = ToData.deriveCaseClass[BondConfig](0)
+
     given FromData[BondAction] = FromData.deriveEnum {
         case 0 => FromData.deriveConstructor[BondAction.Withdraw]
         case 1 => FromData.deriveConstructor[BondAction.FraudProof]
     }
+    given ToData[BondAction] = (a: BondAction) =>
+        a match
+            case BondAction.Withdraw(preimage) =>
+                Builtins.mkConstr(0, Builtins.mkCons(preimage.toData, Builtins.mkNilData()))
+            case BondAction.FraudProof(
+                  signature,
+                  preimage,
+                  encryptedChunk,
+                  chunkHash,
+                  chunkIndex,
+                  merkleProof
+                ) =>
+                Builtins.mkConstr(
+                  1,
+                  Builtins.mkCons(
+                    signature.toData,
+                    Builtins.mkCons(
+                      preimage.toData,
+                      Builtins.mkCons(
+                        encryptedChunk.toData,
+                        Builtins.mkCons(
+                          chunkHash.toData,
+                          Builtins.mkCons(
+                            chunkIndex.toData,
+                            Builtins.mkCons(
+                              merkleProof.toData,
+                              Builtins.mkNilData()
+                            )
+                          )
+                        )
+                      )
+                    )
+                  )
+                )
 
     def integerToByteString(num: BigInt): ByteString =
         def loop(div: BigInt, result: ByteString): ByteString = {
