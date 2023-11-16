@@ -161,7 +161,7 @@ class ContractTests extends munit.ScalaCheckSuite {
             case other                                  => pf(other)
     }
 
-    test("calculateFileIdAndEncId".only) {
+    test("calculateFileIdAndEncId") {
         val (fileId, encId) =
             Encryption.calculateFileIdAndEncId(Path.of("bitcoin.pdf"), preimage.bytes)
         assert(fileId.toHex == "09E15338990511F7E8D8B8E9BE27ECC6ABE5CE3205E7DFF2A597A27C4148D577")

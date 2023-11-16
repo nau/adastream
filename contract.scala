@@ -359,20 +359,14 @@ object MerkleTree {
     }
 
     def calculateMerkleTreeLevel(hashes: ArrayBuffer[ByteString]): ArrayBuffer[ByteString] = {
-        val hasher = new SHA256Digest()
         var levelHashes = ArrayBuffer.empty[ByteString]
-
         // Duplicate the last element if the number of elements is odd
         if hashes.length % 2 == 1
         then hashes.addOne(hashes.last)
 
         for (i <- hashes.indices by 2) {
             val combinedHash = hashes(i).bytes ++ hashes(i + 1).bytes
-            hasher.update(combinedHash, 0, combinedHash.length)
-            val hash = new Array[Byte](hasher.getDigestSize)
-            hasher.doFinal(hash, 0)
-            hasher.reset() // Reset the hasher for the next iteration
-            levelHashes += ByteString.unsafeFromArray(hash)
+            levelHashes += ByteString.unsafeFromArray(Utils.sha2_256(combinedHash))
         }
         levelHashes
     }
