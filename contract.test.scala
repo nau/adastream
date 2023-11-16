@@ -42,6 +42,7 @@ import org.bouncycastle.crypto.digests.Blake2bDigest
 import scala.collection.immutable.ArraySeq
 import org.scalacheck.Shrink
 import java.nio.file.Path
+import java.io.File
 
 class ContractTests extends munit.ScalaCheckSuite {
     // generate ed25519 keys
@@ -54,7 +55,8 @@ class ContractTests extends munit.ScalaCheckSuite {
     val publicKey =
         asymmetricCipherKeyPair.getPublic().asInstanceOf[Ed25519PublicKeyParameters];
 
-    val preimage = ByteString.fromString("preimage")
+    val preimage =
+        ByteString.fromHex("a64cf172224cab7a1b1da28e14719a810b5de126141d066892dada6b6b6e7ccd")
     val preimageHash = ByteString.unsafeFromArray(Utils.sha2_256(preimage.bytes))
     val encryptedChunk = ByteString.fromArray(Utils.sha2_256("encryptedChunk".getBytes))
     val chunkHash = ByteString.fromArray(Utils.sha2_256("chunkHash".getBytes))
@@ -71,7 +73,7 @@ class ContractTests extends munit.ScalaCheckSuite {
     }
 
     test("Server can withdraw with valid preimage and signature") {
-        val withdraw = BondAction.Withdraw(ByteString.fromString("preimage"))
+        val withdraw = BondAction.Withdraw(preimage)
         evalBondValidator(
           bondConfig,
           withdraw,
@@ -159,12 +161,11 @@ class ContractTests extends munit.ScalaCheckSuite {
             case other                                  => pf(other)
     }
 
-    test("calculateFileIdAndEncId") {
-        val (fileId, encId) = Encryption.calculateFileIdAndEncId(
-          Path.of("/Users/nau/projects/nishlabs/adastream/paper.md"),
-          Utils.sha2_256("secret".getBytes())
-        )
-        println(s"fileId: $fileId, encId: $encId")
+    test("calculateFileIdAndEncId".only) {
+        val (fileId, encId) =
+            Encryption.calculateFileIdAndEncId(Path.of("bitcoin.pdf"), preimage.bytes)
+        assert(fileId.toHex == "09E15338990511F7E8D8B8E9BE27ECC6ABE5CE3205E7DFF2A597A27C4148D577")
+        assert(encId.toHex == "8752EF65D4CDD73854F6E1A4E8AA22C0493B29563D2F3BFEF998157FB4137AB1")
     }
 
     test("xorBytes performance".ignore) {

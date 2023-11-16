@@ -414,7 +414,8 @@ object Encryption {
         hasher.update(secret, 0, secret.length)
 
         // Convert index to bytes and update the hasher
-        val indexBytes = ByteBuffer.allocate(4).putInt(index + 1).array()
+        // We add +1 to avoid the case 0 == 0x encoded as zero bytes
+        val indexBytes = toBytes(index + 1)
         hasher.update(indexBytes, 0, indexBytes.length)
 
         // Finalize the hash
@@ -423,6 +424,30 @@ object Encryption {
 
         // XOR each byte of the chunk with the hash
         chunk.zip(hash).map { case (chunkByte, hashByte) => (chunkByte ^ hashByte).toByte }
+    }
+
+    def toBytes(n: Int): Array[Byte] = {
+        if (n == 0) {
+            Array.empty
+        } else {
+            var absN = math.abs(n)
+            val result = scala.collection.mutable.ArrayBuffer[Byte]()
+            val neg = n < 0
+
+            while (absN != 0) {
+                val byte = (absN & 0xff).toByte
+                absN >>= 8
+                result.append(byte)
+            }
+
+            if ((result.last & 0x80) != 0) {
+                result.append(if (neg) 0x80.toByte else 0.toByte)
+            } else if (neg) {
+                result(result.length - 1) = (result.last | 0x80).toByte
+            }
+
+            result.toArray
+        }
     }
 
     def decryptChunk(chunk: Array[Byte], secret: Array[Byte], index: Int): Array[Byte] = {
@@ -447,17 +472,28 @@ object Encryption {
 
         val hashes = ArraySeq.newBuilder[ByteString]
         val encHashes = ArraySeq.newBuilder[ByteString]
+        var index = 0
         while (inputStream.available() > 0) {
             val chunk = readChunk32(inputStream)
-            val encrypted = encryptChunk(chunk, secret, 0)
+            val encrypted = encryptChunk(chunk, secret, index)
             val hash = Utils.sha2_256(chunk)
             val encHash = Utils.sha2_256(encrypted ++ hash)
             hashes += ByteString.unsafeFromArray(hash)
             encHashes += ByteString.unsafeFromArray(encHash)
+            index += 1
         }
         val fileId = MerkleTree.fromHashes(hashes.result()).getMerkleRoot
         val encId = MerkleTree.fromHashes(encHashes.result()).getMerkleRoot
         (fileId, encId)
+    }
+
+    def makeFraudProof(
+        encChunk: ByteString,
+        hash: ByteString,
+        chunkIndex: Int,
+        merkleTree: MerkleTree
+    ) = {
+        ???
     }
 }
 
