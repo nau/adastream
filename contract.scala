@@ -43,8 +43,12 @@ import scalus.uplc.ToData
 import scalus.uplc.ToDataInstances.given
 import scalus.utils.Utils
 
+import java.nio.ByteBuffer
+import java.nio.file.Path
 import java.util.Arrays
+import scala.annotation.tailrec
 import scala.collection.mutable.ArrayBuffer
+import java.io.InputStream
 
 @Compile
 object BondContract {
@@ -402,6 +406,59 @@ object MerkleTree {
         currentHash
     }
 
+}
+
+object Encryption {
+    def encryptChunk(chunk: Array[Byte], secret: Array[Byte], index: Int): Array[Byte] = {
+        val hasher = new SHA256Digest()
+        hasher.update(secret, 0, secret.length)
+
+        // Convert index to bytes and update the hasher
+        val indexBytes = ByteBuffer.allocate(4).putInt(index + 1).array()
+        hasher.update(indexBytes, 0, indexBytes.length)
+
+        // Finalize the hash
+        val hash = new Array[Byte](hasher.getDigestSize)
+        hasher.doFinal(hash, 0)
+
+        // XOR each byte of the chunk with the hash
+        chunk.zip(hash).map { case (chunkByte, hashByte) => (chunkByte ^ hashByte).toByte }
+    }
+
+    def decryptChunk(chunk: Array[Byte], secret: Array[Byte], index: Int): Array[Byte] = {
+        encryptChunk(chunk, secret, index)
+    }
+
+    def readChunk32(inputStream: InputStream): Array[Byte] = {
+        val buffer = new Array[Byte](32)
+        val bytesRead = inputStream.read(buffer)
+        if (bytesRead == -1) null
+        else if (bytesRead < 32) {
+            // Pad the buffer with zeros if less than chunkSize bytes are read
+            java.util.Arrays.fill(buffer, bytesRead, 32, 0.toByte)
+            buffer
+        } else buffer
+    }
+
+    def calculateFileIdAndEncId(inputFile: Path, secret: Array[Byte]): (ByteString, ByteString) = {
+        import java.io.{File, FileInputStream}
+
+        val inputStream = new FileInputStream(inputFile.toFile())
+
+        val hashes = ArraySeq.newBuilder[ByteString]
+        val encHashes = ArraySeq.newBuilder[ByteString]
+        while (inputStream.available() > 0) {
+            val chunk = readChunk32(inputStream)
+            val encrypted = encryptChunk(chunk, secret, 0)
+            val hash = Utils.sha2_256(chunk)
+            val encHash = Utils.sha2_256(encrypted ++ hash)
+            hashes += ByteString.unsafeFromArray(hash)
+            encHashes += ByteString.unsafeFromArray(encHash)
+        }
+        val fileId = MerkleTree.fromHashes(hashes.result()).getMerkleRoot
+        val encId = MerkleTree.fromHashes(encHashes.result()).getMerkleRoot
+        (fileId, encId)
+    }
 }
 
 object Bond:

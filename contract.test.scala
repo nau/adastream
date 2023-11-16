@@ -41,6 +41,7 @@ import com.bloxbean.cardano.client.crypto.api.impl.EdDSASigningProvider
 import org.bouncycastle.crypto.digests.Blake2bDigest
 import scala.collection.immutable.ArraySeq
 import org.scalacheck.Shrink
+import java.nio.file.Path
 
 class ContractTests extends munit.ScalaCheckSuite {
     // generate ed25519 keys
@@ -158,13 +159,21 @@ class ContractTests extends munit.ScalaCheckSuite {
             case other                                  => pf(other)
     }
 
+    test("calculateFileIdAndEncId") {
+        val (fileId, encId) = Encryption.calculateFileIdAndEncId(
+          Path.of("/Users/nau/projects/nishlabs/adastream/paper.md"),
+          Utils.sha2_256("secret".getBytes())
+        )
+        println(s"fileId: $fileId, encId: $encId")
+    }
+
     test("xorBytes performance".ignore) {
         val term = Bond.xorBytesScript $ BigInt(1) $ BigInt(2)
         val result = PlutusUplcEval.evalFlat(Program((2, 0, 0), term))
         result match
-          case UplcEvalResult.Success(term, budget, logs) => println(s"$term => $budget, $logs")
-          case UplcEvalResult.TermParsingError(error) => fail(s"TermParsingError: $error")
-          case UplcEvalResult.UplcFailure(errorCode, error) => fail(s"error: $error")
+            case UplcEvalResult.Success(term, budget, logs)   => println(s"$term => $budget, $logs")
+            case UplcEvalResult.TermParsingError(error)       => fail(s"TermParsingError: $error")
+            case UplcEvalResult.UplcFailure(errorCode, error) => fail(s"error: $error")
     }
 
     property("BondContract.xorBytes is the same as BigInt.xor") {
