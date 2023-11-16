@@ -39,6 +39,8 @@ import org.bouncycastle.crypto.signers.Ed25519Signer
 import java.nio.charset.StandardCharsets
 import com.bloxbean.cardano.client.crypto.api.impl.EdDSASigningProvider
 import org.bouncycastle.crypto.digests.Blake2bDigest
+import scala.collection.immutable.ArraySeq
+import org.scalacheck.Shrink
 
 class ContractTests extends munit.ScalaCheckSuite {
     // generate ed25519 keys
@@ -55,7 +57,7 @@ class ContractTests extends munit.ScalaCheckSuite {
     val preimageHash = ByteString.unsafeFromArray(Utils.sha2_256(preimage.bytes))
     val encryptedChunk = ByteString.fromArray(Utils.sha2_256("encryptedChunk".getBytes))
     val chunkHash = ByteString.fromArray(Utils.sha2_256("chunkHash".getBytes))
-    val encId = Helpers.merkleTreeRoot(Array(encryptedChunk, chunkHash))
+    val encId = MerkleTree.fromHashes(ArraySeq(encryptedChunk, chunkHash)).getMerkleRoot
     val bondConfig = BondConfig(
       preimageHash,
       encId,
@@ -210,6 +212,32 @@ class ContractTests extends munit.ScalaCheckSuite {
                 case UplcEvalResult.Success(term, _, _) => fail(s"wrongResult should fail")
                 case UplcEvalResult.UplcFailure(errorCode, error) =>
                 case UplcEvalResult.TermParsingError(error) => fail(s"TermParsingError: $error")
+        }
+    }
+
+    given Arbitrary[ByteString] = Arbitrary {
+        for {
+            len <- Gen.choose(1, 100)
+            ba <- Gen.listOfN(len, Arbitrary.arbitrary[Byte]).map(_.toArray)
+        } yield ByteString.unsafeFromArray(ba)
+    }
+
+    property("for any elements their merkle tree root is the same as merkle tree root from a random index merkle proof") {
+        val elementsGen =
+            for
+                n <- Gen.choose(1, 100)
+                index <- Gen.choose(0, n - 1)
+                elements <- Gen.containerOfN[ArraySeq, ByteString](
+                  n,
+                  Arbitrary.arbitrary[ByteString].map(bs => ByteString.unsafeFromArray(Utils.sha2_256(bs.bytes)))
+                )
+            yield (elements, index)
+        forAll(elementsGen) { (elements: ArraySeq[ByteString], index: Int) =>
+            val tree = MerkleTree.fromHashes(elements)
+            val root = tree.getMerkleRoot
+            val proof = tree.makeMerkleProof(index)
+            val result = MerkleTree.calculateMerkleRootFromProof(index, elements(index), proof)
+            assert(result == root)
         }
     }
 

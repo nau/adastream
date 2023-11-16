@@ -2,17 +2,21 @@
 //> using toolkit 0.2.1
 //> using plugin org.scalus:scalus-plugin_3:0.3.0
 //> using dep org.scalus:scalus_3:0.3.0
+//> using dep org.bouncycastle:bcprov-jdk18on:1.76
 
 package adastream
 
 import io.bullet.borer.Cbor
-import scalus.*
+import org.bouncycastle.crypto.digests.SHA256Digest
 import scalus.Compile
 import scalus.Compiler.compile
 import scalus.Compiler.fieldAsData
+import scalus.*
 import scalus.builtins.Builtins
 import scalus.builtins.ByteString
+import scalus.ledger.api.v1.Extended
 import scalus.ledger.api.v1.FromDataInstances.given
+import scalus.ledger.api.v1.POSIXTime
 import scalus.ledger.api.v2.FromDataInstances.given
 import scalus.ledger.api.v2.ScriptPurpose.*
 import scalus.ledger.api.v2.*
@@ -26,19 +30,21 @@ import scalus.sir.SIR
 import scalus.sir.SimpleSirToUplcLowering
 import scalus.uplc.Cek
 import scalus.uplc.Data
-import scalus.uplc.Data.{FromData, ToData}
-import scalus.uplc.Data.{fromData, toData}
+import scalus.uplc.Data.FromData
+import scalus.uplc.Data.ToData
+import scalus.uplc.Data.fromData
+import scalus.uplc.Data.toData
+import scalus.uplc.FromData
+import scalus.uplc.FromDataInstances.given
 import scalus.uplc.Program
 import scalus.uplc.ProgramFlatCodec
-import scalus.uplc.FromDataInstances.given
-import scalus.uplc.ToDataInstances.given
 import scalus.uplc.Term
-import scalus.utils.Utils
-import scalus.ledger.api.v1.POSIXTime
-import scalus.ledger.api.v1.Extended
-import scalus.uplc.FromData
 import scalus.uplc.ToData
+import scalus.uplc.ToDataInstances.given
+import scalus.utils.Utils
+
 import java.util.Arrays
+import scala.collection.mutable.ArrayBuffer
 
 @Compile
 object BondContract {
@@ -306,21 +312,108 @@ object BondContract {
         }
 }
 
-object Helpers {
-  def merkleTreeRoot(elements: Array[ByteString]): ByteString = {
-    def loop(elements: Array[ByteString]): ByteString = {
-      if elements.length == 1 then elements(0)
-      else {
-        val newElements = elements.grouped(2).map { group =>
-          val bytes = if group.length == 1 then Utils.sha2_256(group(0).bytes ++ group(0).bytes)
-          else Utils.sha2_256(group(0).bytes ++ group(1).bytes)
-          ByteString.unsafeFromArray(bytes)
-        }.toArray
-        loop(newElements)
-      }
+import scala.collection.immutable.ArraySeq
+
+class MerkleTree(private val levels: ArrayBuffer[ArrayBuffer[ByteString]]) {
+    def getMerkleRoot: ByteString = {
+        levels.last.head
     }
-    loop(elements)
-  }
+
+    def makeMerkleProof(index: Int): ArraySeq[ByteString] = {
+        val proofSize = levels.length - 1
+        val hashesCount = levels.head.length
+        assert(index < hashesCount)
+        if proofSize == 0 then return ArraySeq.empty
+
+        var proof = ArraySeq.newBuilder[ByteString]
+        for (level <- 0 until proofSize) {
+            val levelHashes = levels(level)
+            val idx = index / (1 << level)
+            val proofHashIdx = if idx % 2 == 0 then idx + 1 else idx - 1
+            proof += levelHashes(proofHashIdx)
+        }
+
+        proof.result()
+    }
+
+    override def toString(): String = levels.map(_.map(_.toHex).mkString(",")).mkString("\n")
+}
+
+object MerkleTree {
+    def fromHashes(hashes: ArraySeq[ByteString]): MerkleTree = {
+        @annotation.tailrec
+        def buildLevels(
+            currentLevelHashes: ArrayBuffer[ByteString],
+            accumulatedLevels: ArrayBuffer[ArrayBuffer[ByteString]]
+        ): ArrayBuffer[ArrayBuffer[ByteString]] = {
+            if currentLevelHashes.length == 1 then
+                // If only one hash is left, add it to the levels and finish
+                accumulatedLevels += currentLevelHashes
+                accumulatedLevels
+            else
+                // Calculate the next level and recurse
+                val nextLevelHashes = calculateMerkleTreeLevel(currentLevelHashes)
+                accumulatedLevels += currentLevelHashes
+                buildLevels(nextLevelHashes, accumulatedLevels)
+        }
+
+        if (hashes.isEmpty) {
+            MerkleTree(ArrayBuffer(ArrayBuffer(ByteString.unsafeFromArray(new Array[Byte](32)))))
+        } else if (hashes.length == 1) {
+            MerkleTree(ArrayBuffer(ArrayBuffer.from(hashes)))
+        } else {
+            MerkleTree(buildLevels(ArrayBuffer.from(hashes), ArrayBuffer.empty))
+        }
+    }
+
+    def calculateMerkleTreeLevel(hashes: ArrayBuffer[ByteString]): ArrayBuffer[ByteString] = {
+        val hasher = new SHA256Digest()
+        var levelHashes = ArrayBuffer.empty[ByteString]
+
+        // Duplicate the last element if the number of elements is odd
+        if hashes.length % 2 == 1
+        then hashes.addOne(hashes.last)
+
+        for (i <- hashes.indices by 2) {
+            val combinedHash = hashes(i).bytes ++ hashes(i + 1).bytes
+            hasher.update(combinedHash, 0, combinedHash.length)
+            val hash = new Array[Byte](hasher.getDigestSize)
+            hasher.doFinal(hash, 0)
+            hasher.reset() // Reset the hasher for the next iteration
+            levelHashes += ByteString.unsafeFromArray(hash)
+        }
+        levelHashes
+    }
+
+    def calculateMerkleRootFromProof(
+        index: Int,
+        hash: ByteString,
+        proof: ArraySeq[ByteString]
+    ): ByteString = {
+
+        var idx = index
+        val hasher = new SHA256Digest()
+        def finalizeReset(): Array[Byte] = {
+            val hash = new Array[Byte](hasher.getDigestSize)
+            hasher.doFinal(hash, 0)
+            hash
+        }
+        var currentHash = hash
+
+        proof.foreach { sibling =>
+            val combinedHash =
+                if idx % 2 == 0 then currentHash.bytes ++ sibling.bytes
+                else sibling.bytes ++ currentHash.bytes
+            hasher.update(combinedHash.toArray, 0, combinedHash.length)
+            val hash = new Array[Byte](hasher.getDigestSize)
+            hasher.doFinal(hash, 0)
+            currentHash = ByteString.unsafeFromArray(hash)
+            idx /= 2
+        }
+
+        currentHash
+    }
+
 }
 
 object Bond:
