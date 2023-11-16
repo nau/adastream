@@ -158,6 +158,15 @@ class ContractTests extends munit.ScalaCheckSuite {
             case other                                  => pf(other)
     }
 
+    test("xorBytes performance".ignore) {
+        val term = Bond.xorBytesScript $ BigInt(1) $ BigInt(2)
+        val result = PlutusUplcEval.evalFlat(Program((2, 0, 0), term))
+        result match
+          case UplcEvalResult.Success(term, budget, logs) => println(s"$term => $budget, $logs")
+          case UplcEvalResult.TermParsingError(error) => fail(s"TermParsingError: $error")
+          case UplcEvalResult.UplcFailure(errorCode, error) => fail(s"error: $error")
+    }
+
     property("BondContract.xorBytes is the same as BigInt.xor") {
         forAll { (n1: Int, n2: Int) =>
             val absn1 = n1 & 0xff
@@ -222,14 +231,18 @@ class ContractTests extends munit.ScalaCheckSuite {
         } yield ByteString.unsafeFromArray(ba)
     }
 
-    property("for any elements their merkle tree root is the same as merkle tree root from a random index merkle proof") {
+    property(
+      "for any elements their merkle tree root is the same as merkle tree root from a random index merkle proof"
+    ) {
         val elementsGen =
             for
                 n <- Gen.choose(1, 100)
                 index <- Gen.choose(0, n - 1)
                 elements <- Gen.containerOfN[ArraySeq, ByteString](
                   n,
-                  Arbitrary.arbitrary[ByteString].map(bs => ByteString.unsafeFromArray(Utils.sha2_256(bs.bytes)))
+                  Arbitrary
+                      .arbitrary[ByteString]
+                      .map(bs => ByteString.unsafeFromArray(Utils.sha2_256(bs.bytes)))
                 )
             yield (elements, index)
         forAll(elementsGen) { (elements: ArraySeq[ByteString], index: Int) =>

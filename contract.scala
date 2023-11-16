@@ -120,23 +120,11 @@ object BondContract {
         loop(1, ByteString.empty)
 
     def xorBytes(a: BigInt, b: BigInt): BigInt = {
-        def pow(base: BigInt, exponent: BigInt): BigInt = {
-            if exponent == BigInt(0) then BigInt(1)
-            else base * pow(base, exponent - 1)
+        def xorHelper(a: BigInt, b: BigInt, pow: BigInt, result: BigInt): BigInt = {
+            if pow == BigInt(256) then result
+            else xorHelper(a / 2, b / 2, pow * 2, result + ((a + b) % 2) * pow)
         }
-
-        def xorHelper(a: BigInt, b: BigInt, i: BigInt, result: BigInt): BigInt = {
-            if (i < 0) result
-            else {
-                val pow2i = pow(2, i)
-                val bitA = (a / pow2i) % 2
-                val bitB = (b / pow2i) % 2
-                val xorBit = (bitA + bitB) % 2
-                xorHelper(a, b, i - 1, result + xorBit * pow2i)
-            }
-        }
-
-        xorHelper(a, b, 7, 0)
+        xorHelper(a, b, 1, 0)
     }
 
     // a and b are of the same length
@@ -421,10 +409,12 @@ object Bond:
     val bondValidator = compiledBondScript.toUplc(generateErrorTraces = true)
     val bondProgram = Program((2, 0, 0), bondValidator)
     val compiledHtlcScript = compile(BondContract.makeHtlcContractValidator)
+    val xorBytesScript = compile(BondContract.xorBytes).toUplc(generateErrorTraces = true)
     val htlcValidator = compiledHtlcScript.toUplc(generateErrorTraces = true)
     val htlcProgram = Program((2, 0, 0), htlcValidator)
     @main def main() = {
-        println(compiledBondScript.pretty.render(100))
+        // println(compiledBondScript.pretty.render(100))
+        println(xorBytesScript.pretty.render(100))
         // println(bondProgram.doubleCborHex)
         // println(compiledHtlcScript.pretty.render(100))
         // println(htlcProgram.doubleCborHex)
