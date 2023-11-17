@@ -80,19 +80,18 @@ class ContractTests extends munit.ScalaCheckSuite {
           scalus.prelude.List(PubKeyHash(bondConfig.serverPkh))
         ) {
             case UplcEvalResult.Success(term, budget, logs) =>
-                println(budget)
-                println(logs)
+                assert(budget.cpu < 14_000000L)
+                assert(budget.memory < 50000L)
             case UplcEvalResult.UplcFailure(errorCode, error) =>
                 fail(s"UplcFailure: $errorCode, $error")
         }
     }
 
-    test("Server can't withdraw without a signature".only) {
+    test("Server can't withdraw without a signature") {
         val withdraw = BondAction.Withdraw(preimage)
         evalBondValidator(bondConfig, withdraw, scalus.prelude.List.empty) {
             case UplcEvalResult.Success(term, _, _)           => fail(s"should fail")
             case UplcEvalResult.UplcFailure(errorCode, error) =>
-              println(s"UplcFailure: $errorCode, $error")
         }
     }
 
@@ -116,41 +115,88 @@ class ContractTests extends munit.ScalaCheckSuite {
           withdraw,
           scalus.prelude.List(PubKeyHash(bondConfig.serverPkh))
         ) {
-            case UplcEvalResult.Success(term, _, _)           => fail(s"should fail")
+            case UplcEvalResult.Success(term, _, logs) =>
+                fail(s"should fail but got result $term with logs $logs")
             case UplcEvalResult.UplcFailure(errorCode, error) =>
         }
     }
 
-    test("Client can spend with valid fraud proof") {
-        val claim = Builtins.appendByteString(bondConfig.encId, bondConfig.preimageHash)
+    def signMessage(claim: ByteString): ByteString =
         val signer = new Ed25519Signer();
         signer.init(true, privateKey);
-        signer.update(claim.bytes, 0, claim.bytes.length);
-        val signature = ByteString.fromArray(signer.generateSignature())
-        val action =
-            BondAction.FraudProof(
-              signature = signature,
-              preimage = preimage,
-              encryptedChunk = encryptedChunk,
-              chunkHash = chunkHash,
-              chunkIndex = 0,
-              merkleProof = scalus.prelude.List.empty
+        signer.update(claim.bytes, 0, claim.bytes.length)
+        ByteString.fromArray(signer.generateSignature())
+
+    property("Client can spend with valid fraud proof") {
+        val gen = for
+            numChuns <- Gen.frequency(
+              (100, Gen.choose(1, 1000)),
+              (5, Gen.choose(10_000, 100_000)),
+              (1, Gen.choose(1000_000, 2000_000))
             )
-        evalBondValidator(bondConfig, action, scalus.prelude.List.empty) {
-            case UplcEvalResult.Success(term, budget, _) =>
-                println(budget)
-                assert(budget.cpu < 10_000_000000L)
-                assert(budget.memory < 14_000000L)
-            case UplcEvalResult.UplcFailure(errorCode, error) =>
-                fail(s"errorCode: $errorCode, error: $error")
+            wrongChunkIndex <- Gen.choose(0, numChuns - 1)
+            randomChunks <- Gen.listOfN(
+              numChuns,
+              Gen.containerOfN[ArraySeq, Byte](32, Arbitrary.arbitrary[Byte]).map(_.toArray)
+            )
+        yield (wrongChunkIndex, randomChunks)
+        forAll(gen) { (wrongChunkIndex, randomChunks) =>
+            collect(randomChunks.size)
+            val hashes = ArraySeq.newBuilder[ByteString]
+            val encHashes = ArraySeq.newBuilder[ByteString]
+            var wrongEncryptedChunk: ByteString = null
+            var wrongChunkHash: ByteString = null
+            for (chunk, index) <- randomChunks.zipWithIndex do
+                val hash = Utils.sha2_256(chunk)
+                val encrypted =
+                    if index == wrongChunkIndex then
+                        val wrong = Utils.sha2_256("wrong".getBytes)
+                        wrongEncryptedChunk = ByteString.fromArray(wrong)
+                        wrongChunkHash = ByteString.fromArray(hash)
+                        wrong
+                    else Encryption.encryptChunk(chunk, preimage.bytes, index)
+                val encHash = Utils.sha2_256(encrypted ++ hash)
+                hashes += ByteString.fromArray(hash)
+                encHashes += ByteString.fromArray(encHash)
+            val fileId = MerkleTree.fromHashes(hashes.result()).getMerkleRoot
+            val merkleTree = MerkleTree.fromHashes(encHashes.result())
+            val encId = merkleTree.getMerkleRoot
+            val bondConfig = BondConfig(
+              preimageHash,
+              encId,
+              ByteString.fromArray(publicKey.getEncoded()),
+              ByteString.fromArray(blake2b224Hash(publicKey.getEncoded()))
+            )
+            val claim = Builtins.appendByteString(bondConfig.encId, bondConfig.preimageHash)
+            val signature = signMessage(claim)
+            val merkleProof = scalus.prelude.List(merkleTree.makeMerkleProof(wrongChunkIndex): _*)
+            val action =
+                BondAction.FraudProof(
+                  signature = signature,
+                  preimage = preimage,
+                  encryptedChunk = wrongEncryptedChunk,
+                  chunkHash = wrongChunkHash,
+                  chunkIndex = wrongChunkIndex,
+                  merkleProof = merkleProof
+                )
+
+            evalBondValidator(bondConfig, action, scalus.prelude.List.empty) {
+                case UplcEvalResult.Success(term, budget, _) =>
+                    assert(budget.cpu < 2_000_000000L)
+                    assert(budget.memory < 3_000000L)
+                    true
+                case UplcEvalResult.UplcFailure(errorCode, error) =>
+                    fail(s"errorCode: $errorCode, error: $error")
+                    false
+            }
         }
     }
 
-    def evalBondValidator(
+    def evalBondValidator[A](
         bondConfig: BondConfig,
         withdraw: BondAction,
         signatures: scalus.prelude.List[PubKeyHash]
-    )(pf: PartialFunction[UplcEvalResult, Any]) = {
+    )(pf: PartialFunction[UplcEvalResult, A]) = {
         val scriptContext = makeScriptContext(signatures)
         val term =
             Bond.bondValidator $ bondConfig.toData $ withdraw.toData $ makeScriptContext(
@@ -165,8 +211,14 @@ class ContractTests extends munit.ScalaCheckSuite {
     test("calculateFileIdAndEncId") {
         val (fileId, encId) =
             Encryption.calculateFileIdAndEncId(Path.of("bitcoin.pdf"), preimage.bytes)
-        assert(fileId.toHex == "09E15338990511F7E8D8B8E9BE27ECC6ABE5CE3205E7DFF2A597A27C4148D577")
-        assert(encId.toHex == "8752EF65D4CDD73854F6E1A4E8AA22C0493B29563D2F3BFEF998157FB4137AB1")
+        assertEquals(
+          fileId.toHex,
+          "09E15338990511F7E8D8B8E9BE27ECC6ABE5CE3205E7DFF2A597A27C4148D577"
+        )
+        assertEquals(
+          encId.toHex,
+          "065D1EBC27E1390C56D5C05275A1FC741F8256E181462605BB76FAA94B1D34C3"
+        )
     }
 
     test("xorBytes performance".ignore) {
@@ -208,30 +260,6 @@ class ContractTests extends munit.ScalaCheckSuite {
             val bs = BondContract.integerToByteString(positive)
             val bi = BigInt.apply(bs.toHex, 16)
             bi == positive
-        }
-    }
-
-    property("verifyPreimage is correct".ignore) {
-        val verifyPreimage =
-            scalus.Compiler.compile(BondContract.verifyPreimage).toUplc(generateErrorTraces = true)
-        forAll { (bytes: Array[Byte]) =>
-            val preimage = ByteString.unsafeFromArray(bytes)
-            val hash = ByteString.unsafeFromArray(Utils.sha2_256(bytes))
-            val wrongHash = ByteString.unsafeFromArray(Utils.sha2_256(bytes ++ Array(0.toByte)))
-            val result =
-                PlutusUplcEval.evalFlat(Program((2, 0, 0), verifyPreimage $ preimage $ hash))
-            val wrongResult =
-                PlutusUplcEval.evalFlat(Program((2, 0, 0), verifyPreimage $ preimage $ wrongHash))
-            result match
-                case UplcEvalResult.Success(term, _, _) =>
-                case UplcEvalResult.UplcFailure(errorCode, error) =>
-                    fail(s"UplcFailure: $errorCode, $error")
-                case UplcEvalResult.TermParsingError(error) => fail(s"TermParsingError: $error")
-
-            wrongResult match
-                case UplcEvalResult.Success(term, _, _) => fail(s"wrongResult should fail")
-                case UplcEvalResult.UplcFailure(errorCode, error) =>
-                case UplcEvalResult.TermParsingError(error) => fail(s"TermParsingError: $error")
         }
     }
 
@@ -319,7 +347,6 @@ object PlutusUplcEval:
             UplcParser.term.parse(out) match
                 case Right(remaining, term) =>
                     val budget = raw"CPU budget:\s+(\d+)Memory budget:\s+(\d+)(.+)".r
-                    println(remaining)
                     remaining match
                         case budget(cpu, memory, logs) =>
                             UplcEvalResult.Success(

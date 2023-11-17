@@ -158,22 +158,24 @@ object BondContract {
         val encryptedChunkAndChunkHashHash = Builtins.sha2_256(
           Builtins.appendByteString(encryptedChunk, chunkHash)
         )
-        val merkleRoot = List.foldLeft(merkleProof, encryptedChunkAndChunkHashHash) { (acc, hash) =>
-            Builtins.sha2_256(
-              if chunkIndex % 2 == BigInt(0) then Builtins.appendByteString(hash, acc)
-              else Builtins.appendByteString(acc, hash)
-            )
-        }
-        if Builtins.equalsByteString(merkleRoot, encId) then true
-        else throw new Exception("M")
+        def loop(index: BigInt, curHash: ByteString, siblings: List[ByteString]): ByteString =
+            siblings match
+                case Nil => curHash
+                case Cons(sibling, rest) =>
+                    val nextHash =
+                        if index % 2 == BigInt(0) then
+                            Builtins.sha2_256(Builtins.appendByteString(curHash, sibling))
+                        else Builtins.sha2_256(Builtins.appendByteString(sibling, curHash))
+                    loop(index / 2, nextHash, rest)
+
+        val merkleRoot = loop(chunkIndex, encryptedChunkAndChunkHashHash, merkleProof)
+        Builtins.equalsByteString(merkleRoot, encId)
 
     def verifyPreimage(preimage: ByteString, preimageHash: ByteString): Boolean =
-        if Builtins.equalsByteString(
-              preimageHash,
-              Builtins.sha2_256(preimage)
-            )
-        then true
-        else throw new Exception("P")
+        Builtins.equalsByteString(
+          preimageHash,
+          Builtins.sha2_256(preimage)
+        )
 
     inline def verifyFraudProof(
         chunkHash: ByteString,
@@ -203,18 +205,15 @@ object BondContract {
                 )
               )
             )
-            if Builtins.equalsByteString(expectedChunkHash, chunkHash) then throw new Exception("H")
-            else true
+            !Builtins.equalsByteString(expectedChunkHash, chunkHash)
         Builtins.trace("verifyWrongChunkHash")(true)
         val verifyValidClaimSignature = {
             val claim = Builtins.appendByteString(encId, preimageHash)
-            if Builtins.verifyEd25519Signature(
-                  serverPubKey,
-                  claim,
-                  signature
-                )
-            then true
-            else throw new Exception("S")
+            Builtins.verifyEd25519Signature(
+              serverPubKey,
+              claim,
+              signature
+            )
         }
         Builtins.trace("verifyValidClaimSignature")(true)
 
@@ -228,10 +227,10 @@ object BondContract {
           chunkIndex,
           encId
         )
-        verifyWrongChunkHash
-        && verifyValidClaimSignature
-        && verifyValidPreimage
-        && merkleInclusionProofValid
+        (verifyWrongChunkHash || (throw new Exception("W")))
+        && (verifyValidClaimSignature || (throw new Exception("S")))
+        && (verifyValidPreimage || (throw new Exception("P")))
+        && (merkleInclusionProofValid || (throw new Exception("M")))
 
     def bondContractValidator(datum: Data, redeemer: Data, ctxData: Data) = {
         fromData[BondConfig](datum) match
@@ -243,11 +242,10 @@ object BondContract {
                         val signatories = fieldAsData[ScriptContext](_.txInfo.signatories)(ctxData)
                         val pkh =
                             Builtins.unsafeDataAsB(Builtins.unsafeDataAsList(signatories).head)
-                        val verifySignature =
-                            if Builtins.equalsByteString(pkh, serverPkh) then true
-                            else throw new Exception("W")
+                        val verifySignature = Builtins.equalsByteString(pkh, serverPkh)
                         val verifyValidPreimage = verifyPreimage(preimage, preimageHash)
-                        verifySignature && verifyValidPreimage
+                        (verifySignature || (throw new Exception("S")))
+                        && (verifyValidPreimage || (throw new Exception("P")))
                     case BondAction.FraudProof(
                           signature,
                           preimage,
@@ -328,7 +326,8 @@ class MerkleTree(private val levels: ArrayBuffer[ArrayBuffer[ByteString]]) {
         proof.result()
     }
 
-    override def toString(): String = levels.map(_.map(_.toHex).mkString(",")).mkString("\n")
+    override def toString(): String =
+        levels.map(_.map(_.toHex.take(8)).mkString(",")).mkString("\n")
 }
 
 object MerkleTree {
@@ -409,7 +408,7 @@ object Encryption {
 
         // Convert index to bytes and update the hasher
         // We add +1 to avoid the case 0 == 0x encoded as zero bytes
-        val indexBytes = toBytes(index + 1)
+        val indexBytes = BondContract.integerToByteString(index + 1).bytes
         hasher.update(indexBytes, 0, indexBytes.length)
 
         // Finalize the hash
@@ -418,30 +417,6 @@ object Encryption {
 
         // XOR each byte of the chunk with the hash
         chunk.zip(hash).map { case (chunkByte, hashByte) => (chunkByte ^ hashByte).toByte }
-    }
-
-    def toBytes(n: Int): Array[Byte] = {
-        if (n == 0) {
-            Array.empty
-        } else {
-            var absN = math.abs(n)
-            val result = scala.collection.mutable.ArrayBuffer[Byte]()
-            val neg = n < 0
-
-            while (absN != 0) {
-                val byte = (absN & 0xff).toByte
-                absN >>= 8
-                result.append(byte)
-            }
-
-            if ((result.last & 0x80) != 0) {
-                result.append(if (neg) 0x80.toByte else 0.toByte)
-            } else if (neg) {
-                result(result.length - 1) = (result.last | 0x80).toByte
-            }
-
-            result.toArray
-        }
     }
 
     def decryptChunk(chunk: Array[Byte], secret: Array[Byte], index: Int): Array[Byte] = {
@@ -481,14 +456,6 @@ object Encryption {
         (fileId, encId)
     }
 
-    def makeFraudProof(
-        encChunk: ByteString,
-        hash: ByteString,
-        chunkIndex: Int,
-        merkleTree: MerkleTree
-    ) = {
-        ???
-    }
 }
 
 object Bond:
