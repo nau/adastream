@@ -13,6 +13,7 @@
         pkgs = nixpkgs.legacyPackages.${system};
         patchedUplc = plutus.${system}.plutus.library.plutus-project.hsPkgs.plutus-core.components.exes.uplc.overrideAttrs (oldAttrs: {
           patches = oldAttrs.patches or [] ++ [ ./uplc.patch ];
+          patchFlags = [ "-p2" ];
         });
 
       in
