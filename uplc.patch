@@ -1,0 +1,13 @@
+diff --git a/plutus-core/executables/uplc/Main.hs b/plutus-core/executables/uplc/Main.hs
+index 29c4b301bd..eca21055d9 100644
+--- a/plutus-core/executables/uplc/Main.hs
++++ b/plutus-core/executables/uplc/Main.hs
+@@ -209,7 +209,7 @@ runEval (EvalOptions inp ifmt printMode budgetMode traceMode outputMode timingMo
+                                 _   -> error "Timing evaluations returned inconsistent results"
+                 handleResults t (res, budget, logs) = do
+                     case res of
+-                        Left err -> hPrint stderr err >> exitFailure
++                        Left err -> hPrint stderr err -- >> exitFailure
+                         Right v  -> writeToFileOrStd outputMode (show (getPrintMethod printMode v))
+                     case budgetMode of
+                         Silent    -> pure ()

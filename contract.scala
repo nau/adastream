@@ -2,7 +2,7 @@
 //> using toolkit 0.2.1
 //> using plugin org.scalus:scalus-plugin_3:0.3.0
 //> using dep org.scalus:scalus_3:0.3.0
-//> using dep org.bouncycastle:bcprov-jdk18on:1.76
+//> using dep org.bouncycastle:bcprov-jdk18on:1.77
 
 package adastream
 

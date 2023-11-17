@@ -11,6 +11,10 @@
     flake-utils.lib.eachDefaultSystem (system:
       let
         pkgs = nixpkgs.legacyPackages.${system};
+        patchedUplc = plutus.${system}.plutus.library.plutus-project.hsPkgs.plutus-core.components.exes.uplc.overrideAttrs (oldAttrs: {
+          patches = oldAttrs.patches or [] ++ [ ./uplc.patch ];
+        });
+
       in
       {
         devShell = pkgs.mkShell {
@@ -19,7 +23,6 @@
             pkgs.jdk21
             plutus.${system}.plutus.library.plutus-project.hsPkgs.plutus-core.components.exes.uplc
           ];
-
           # Set any environment variables or shell hooks if needed
           # Example:
           # shellHook = ''

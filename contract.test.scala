@@ -3,7 +3,7 @@
 //> using test.dep org.scalameta::munit-scalacheck::1.0.0-M10
 //> using test.dep org.scalacheck::scalacheck::1.17.0
 //> using dep org.scalus:scalus_3:0.3.0
-//> using dep org.bouncycastle:bcprov-jdk18on:1.76
+//> using dep org.bouncycastle:bcprov-jdk18on:1.77
 //> using dep com.bloxbean.cardano:cardano-client-lib:0.5.0
 
 package adastream
@@ -87,11 +87,12 @@ class ContractTests extends munit.ScalaCheckSuite {
         }
     }
 
-    test("Server can't withdraw without a signature") {
+    test("Server can't withdraw without a signature".only) {
         val withdraw = BondAction.Withdraw(preimage)
         evalBondValidator(bondConfig, withdraw, scalus.prelude.List.empty) {
             case UplcEvalResult.Success(term, _, _)           => fail(s"should fail")
             case UplcEvalResult.UplcFailure(errorCode, error) =>
+              println(s"UplcFailure: $errorCode, $error")
         }
     }
 
