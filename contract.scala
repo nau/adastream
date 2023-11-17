@@ -49,6 +49,7 @@ import java.util.Arrays
 import scala.annotation.tailrec
 import scala.collection.mutable.ArrayBuffer
 import java.io.InputStream
+import java.io.FileInputStream
 
 @Compile
 object BondContract {
@@ -456,6 +457,13 @@ object Encryption {
         (fileId, encId)
     }
 
+    def chunksFromInputStream(inputStream: InputStream): LazyList[Array[Byte]] = {
+        if (inputStream.available() > 0) {
+            val chunk = readChunk32(inputStream)
+            chunk #:: chunksFromInputStream(inputStream)
+        } else LazyList.empty
+    }
+
 }
 
 object Bond:
@@ -466,12 +474,24 @@ object Bond:
     val xorBytesScript = compile(BondContract.xorBytes).toUplc(generateErrorTraces = true)
     val htlcValidator = compiledHtlcScript.toUplc(generateErrorTraces = true)
     val htlcProgram = Program((2, 0, 0), htlcValidator)
-    @main def main() = {
-        // println(compiledBondScript.pretty.render(100))
-        println(xorBytesScript.pretty.render(100))
-        // println(bondProgram.doubleCborHex)
-        // println(compiledHtlcScript.pretty.render(100))
-        // println(htlcProgram.doubleCborHex)
-        println(s"bondProgram size: ${bondProgram.doubleCborEncoded.size}")
-        println(s"htlcProgram size: ${htlcProgram.doubleCborEncoded.size}")
+
+    def publish(file: String) = {
+        val hashes = Encryption
+            .chunksFromInputStream(new FileInputStream(file))
+            .map(ch => ByteString.fromArray(Utils.sha2_256(ch)))
+        val merkleTree = MerkleTree.fromHashes(ArraySeq.from(hashes))
+        println(s"fileId: ${merkleTree.getMerkleRoot.toHex}")
+    }
+
+    @main def main(cmd: String, others: String*) = {
+        cmd match
+            case "info" =>
+                // println(compiledBondScript.pretty.render(100))
+                // println(bondProgram.doubleCborHex)
+                // println(compiledHtlcScript.pretty.render(100))
+                // println(htlcProgram.doubleCborHex)
+                println(s"bondProgram size: ${bondProgram.doubleCborEncoded.size}")
+                println(s"htlcProgram size: ${htlcProgram.doubleCborEncoded.size}")
+            case "publish" => publish(others.head)
+
     }
