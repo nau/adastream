@@ -21,7 +21,7 @@
           nativeBuildInputs = [
             pkgs.scala-cli
             pkgs.jdk21
-            plutus.${system}.plutus.library.plutus-project.hsPkgs.plutus-core.components.exes.uplc
+            patchedUplc
           ];
           # Set any environment variables or shell hooks if needed
           # Example:
