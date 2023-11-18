@@ -556,7 +556,8 @@ object Bond:
           mnemonic,
           DerivationPath.createExternalAddressDerivationPath(0)
         );
-        val signature = signingProvider.signExtended(claim.bytes, hdKeyPair.getPrivateKey().getKeyData())
+        val signature =
+            signingProvider.signExtended(claim.bytes, hdKeyPair.getPrivateKey().getKeyData())
         val fileOut = System.out
         fileOut.write(signature)
         fileOut.write(preimageHash.bytes)
@@ -700,11 +701,10 @@ object Bond:
                 BytesPlutusData.of(b.bytes)
     }
 
-    def makeBondTx(publicKeyHex: String) = {
+    def makeBondTx() = {
 
         val chunks = chunksFromInputStream(System.in).toArray
         val signature = chunks(0) ++ chunks(1) // 64 bytes, 2 chunks
-        val publicKeyBytes = Utils.hexToBytes(publicKeyHex)
         val paymentHash = ByteString.fromArray(chunks(2)) // 32 bytes, 1 chunk
         val encId = merkleTreeFromIterator(chunks.iterator.drop(3)).getMerkleRoot
         val plutusScript = PlutusV2Script
@@ -715,35 +715,32 @@ object Bond:
         val scriptAddress =
             AddressProvider.getEntAddress(plutusScript, Networks.preview()).toBech32();
 
+        System.err.println(s"bond contract address: $scriptAddress")
+
         val backendService = new BFBackendService(
           Constants.BLOCKFROST_PREVIEW_URL,
           System.getenv("BLOCKFROST_API_KEY")
         )
 
         val sender = new Account(Networks.testnet(), System.getenv("MNEMONIC"))
-
+        val publicKeyBytes = sender.hdKeyPair().getPublicKey().getKeyData()
         val quickTxBuilder = new QuickTxBuilder(backendService)
         val bondConfig = BondContract.BondConfig(
           paymentHash,
           encId,
           ByteString.unsafeFromArray(publicKeyBytes),
-          ByteString.unsafeFromArray(sender.getBaseAddress().getBytes())
+          ByteString.unsafeFromArray(sender.hdKeyPair().getPublicKey().getKeyHash())
         )
         val datumData = dataToCardanoClientPlutusData(bondConfig.toData)
         val tx = new Tx()
             .payToContract(scriptAddress, Amount.ada(100), datumData)
             .from(sender.getBaseAddress().getAddress())
 
-        val transaction = quickTxBuilder
+        val result = quickTxBuilder
             .compose(tx)
             .withSigner(SignerProviders.signerFrom(sender))
-            .buildAndSign()
-
-        System.err.println(s"bond contract address: $scriptAddress")
-
-        println(transaction.toJson())
-        println(transaction.serializeToHex())
-
+            .complete()
+        println(result)
     }
 
     def showKeys() = {
@@ -765,7 +762,7 @@ object Bond:
             case "encrypt"    => encrypt(others.head)
             case "decrypt"    => decrypt(others.head, others(1))
             case "verify"     => verify(others.head)
-            case "makeBondTx" => makeBondTx(others.head)
+            case "makeBondTx" => makeBondTx()
             case "keys"       => showKeys()
 
     }
