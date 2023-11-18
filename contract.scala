@@ -78,6 +78,9 @@ import net.i2p.crypto.eddsa.EdDSAEngine
 import com.bloxbean.cardano.client.crypto.config.CryptoConfiguration
 import com.bloxbean.cardano.client.crypto.cip1852.CIP1852
 import com.bloxbean.cardano.client.crypto.cip1852.DerivationPath
+import com.bloxbean.cardano.client.function.helper.ScriptUtxoFinders
+import com.bloxbean.cardano.client.backend.api.DefaultUtxoSupplier
+import com.bloxbean.cardano.client.quicktx.ScriptTx
 
 extension (a: Array[Byte]) def toHex: String = Utils.bytesToHex(a)
 
@@ -710,20 +713,19 @@ object Bond:
         val plutusScript = PlutusV2Script
             .builder()
             .`type`("PlutusScriptV2")
-            .cborHex(bondProgram.cborEncoded.toHex)
+            .cborHex(bondProgram.doubleCborHex)
             .build();
         val scriptAddress =
             AddressProvider.getEntAddress(plutusScript, Networks.preview()).toBech32();
 
         System.err.println(s"bond contract address: $scriptAddress")
 
+        val sender = new Account(Networks.testnet(), System.getenv("MNEMONIC"))
+        val publicKeyBytes = sender.hdKeyPair().getPublicKey().getKeyData()
         val backendService = new BFBackendService(
           Constants.BLOCKFROST_PREVIEW_URL,
           System.getenv("BLOCKFROST_API_KEY")
         )
-
-        val sender = new Account(Networks.testnet(), System.getenv("MNEMONIC"))
-        val publicKeyBytes = sender.hdKeyPair().getPublicKey().getKeyData()
         val quickTxBuilder = new QuickTxBuilder(backendService)
         val bondConfig = BondContract.BondConfig(
           paymentHash,
@@ -740,6 +742,52 @@ object Bond:
             .compose(tx)
             .withSigner(SignerProviders.signerFrom(sender))
             .complete()
+        println(result)
+    }
+
+    def withdraw(preimage: String, encId: String) = {
+        val paymentHash = ByteString.unsafeFromArray(Utils.sha2_256(Utils.hexToBytes(preimage)))
+        val sender = new Account(Networks.testnet(), System.getenv("MNEMONIC"))
+        val plutusScript = PlutusV2Script
+            .builder()
+            .`type`("PlutusScriptV2")
+            .cborHex(bondProgram.doubleCborHex)
+            .build();
+
+        val scriptAddress =
+            AddressProvider.getEntAddress(plutusScript, Networks.preview()).toBech32()
+
+        val backendService = new BFBackendService(
+          Constants.BLOCKFROST_PREVIEW_URL,
+          System.getenv("BLOCKFROST_API_KEY")
+        )
+        val utxoSupplier = new DefaultUtxoSupplier(backendService.getUtxoService())
+        val bondConfig = BondContract.BondConfig(
+          paymentHash,
+          ByteString.fromHex(encId),
+          ByteString.unsafeFromArray(sender.hdKeyPair().getPublicKey().getKeyData()),
+          ByteString.unsafeFromArray(sender.hdKeyPair().getPublicKey().getKeyHash())
+        )
+        val datumData = dataToCardanoClientPlutusData(bondConfig.toData)
+        val utxo =
+            ScriptUtxoFinders.findFirstByInlineDatum(utxoSupplier, scriptAddress, datumData).get
+
+        println(s"found utxo: $utxo")
+
+        val redeemer = BondContract.BondAction.Withdraw(ByteString.fromHex(preimage)).toData
+        val scriptTx = new ScriptTx()
+            .collectFrom(utxo, dataToCardanoClientPlutusData(redeemer))
+            .payToAddress(sender.baseAddress(), utxo.getAmount())
+            .attachSpendingValidator(plutusScript)
+
+        val quickTxBuilder = new QuickTxBuilder(backendService)
+        val tx = quickTxBuilder
+            .compose(scriptTx)
+            .feePayer(sender.baseAddress())
+            .withSigner(SignerProviders.signerFrom(sender))
+            .buildAndSign()
+        println(tx.toJson())
+        val result = backendService.getTransactionService().submitTransaction(tx.serialize())
         println(result)
     }
 
@@ -763,6 +811,7 @@ object Bond:
             case "decrypt"    => decrypt(others.head, others(1))
             case "verify"     => verify(others.head)
             case "makeBondTx" => makeBondTx()
+            case "withdraw"   => withdraw(others.head, others(1))
             case "keys"       => showKeys()
 
     }
