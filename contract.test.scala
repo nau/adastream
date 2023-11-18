@@ -121,12 +121,6 @@ class ContractTests extends munit.ScalaCheckSuite {
         }
     }
 
-    def signMessage(claim: ByteString): ByteString =
-        val signer = new Ed25519Signer();
-        signer.init(true, privateKey);
-        signer.update(claim.bytes, 0, claim.bytes.length)
-        ByteString.fromArray(signer.generateSignature())
-
     property("Client can spend with valid fraud proof") {
         val gen = for
             numChuns <- Gen.frequency(
@@ -168,7 +162,8 @@ class ContractTests extends munit.ScalaCheckSuite {
               ByteString.fromArray(blake2b224Hash(publicKey.getEncoded()))
             )
             val claim = Builtins.appendByteString(bondConfig.encId, bondConfig.preimageHash)
-            val signature = signMessage(claim)
+            val signature =
+                Encryption.signMessage(claim, privateKey)
             val merkleProof = scalus.prelude.List(merkleTree.makeMerkleProof(wrongChunkIndex): _*)
             val action =
                 BondAction.FraudProof(

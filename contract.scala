@@ -50,6 +50,10 @@ import scala.annotation.tailrec
 import scala.collection.mutable.ArrayBuffer
 import java.io.InputStream
 import java.io.FileInputStream
+import adastream.Encryption.chunksFromInputStream
+import org.bouncycastle.crypto.params.Ed25519PrivateKeyParameters
+import org.bouncycastle.crypto.signers.Ed25519Signer
+import adastream.Encryption.signMessage
 
 @Compile
 object BondContract {
@@ -464,6 +468,12 @@ object Encryption {
         } else LazyList.empty
     }
 
+
+    def signMessage(claim: ByteString, privateKey: Ed25519PrivateKeyParameters): ByteString =
+        val signer = new Ed25519Signer();
+        signer.init(true, privateKey);
+        signer.update(claim.bytes, 0, claim.bytes.length)
+        ByteString.fromArray(signer.generateSignature())
 }
 
 object Bond:
@@ -483,6 +493,39 @@ object Bond:
         println(s"fileId: ${merkleTree.getMerkleRoot.toHex}")
     }
 
+    def encrypt(file: String, secret: String, privateKey: String) = {
+        val preimage = Utils.hexToBytes(secret)
+        val preimageHash = ByteString.unsafeFromArray(Utils.sha2_256(preimage))
+        val encryptedChunks = ArraySeq.newBuilder[Array[Byte]]
+        val hashes = ArraySeq.newBuilder[ByteString]
+        val encHashes = ArraySeq.newBuilder[ByteString]
+        chunksFromInputStream(new FileInputStream(file)).zipWithIndex.foreach {
+            case (chunk, index) =>
+                val encrypted = Encryption.encryptChunk(chunk, preimage, index)
+                val hash = Utils.sha2_256(chunk)
+                val encHash = Utils.sha2_256(encrypted ++ hash)
+                encryptedChunks += encrypted
+                hashes += ByteString.unsafeFromArray(hash)
+                encHashes += ByteString.unsafeFromArray(encHash)
+        }
+        val fileId = MerkleTree.fromHashes(hashes.result()).getMerkleRoot
+        val encId = MerkleTree.fromHashes(encHashes.result()).getMerkleRoot
+        val claim = Builtins.appendByteString(encId, preimageHash)
+        val pk = new Ed25519PrivateKeyParameters(Utils.hexToBytes(privateKey))
+        val signature = signMessage(claim, pk)
+        val fileOut = new java.io.FileOutputStream(file + ".encrypted")
+        fileOut.write(signature.bytes)
+        fileOut.write(preimageHash.bytes)
+        encryptedChunks.result().foreach(chunk => fileOut.write(chunk))
+        fileOut.close()
+        println(s"preimage: ${Utils.bytesToHex(preimage)}")
+        println(s"preimageHash: ${preimageHash.toHex}")
+        println(s"pubKey: ${Utils.bytesToHex(pk.generatePublicKey().getEncoded())}")
+        println(s"signature: ${signature.toHex}")
+        println(s"fileId: ${fileId.toHex}")
+        println(s"encId: ${encId.toHex}")
+    }
+
     @main def main(cmd: String, others: String*) = {
         cmd match
             case "info" =>
@@ -493,5 +536,6 @@ object Bond:
                 println(s"bondProgram size: ${bondProgram.doubleCborEncoded.size}")
                 println(s"htlcProgram size: ${htlcProgram.doubleCborEncoded.size}")
             case "publish" => publish(others.head)
+            case "encrypt" => encrypt(others.head, others(1), others(2))
 
     }
