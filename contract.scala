@@ -3,6 +3,7 @@
 //> using plugin org.scalus:scalus-plugin_3:0.3.0
 //> using dep org.scalus:scalus_3:0.3.0
 //> using dep org.bouncycastle:bcprov-jdk18on:1.77
+//> using dep net.i2p.crypto:eddsa:0.3.0
 //> using dep com.bloxbean.cardano:cardano-client-lib:0.5.0
 //> using dep com.bloxbean.cardano:cardano-client-backend-blockfrost:0.5.0
 
@@ -73,6 +74,10 @@ import org.bouncycastle.crypto.digests.Blake2bDigest
 import com.bloxbean.cardano.client.plutus.spec.BigIntPlutusData
 import com.bloxbean.cardano.client.plutus.spec.PlutusData
 import com.bloxbean.cardano.client.plutus.spec.*
+import net.i2p.crypto.eddsa.EdDSAEngine
+import com.bloxbean.cardano.client.crypto.config.CryptoConfiguration
+import com.bloxbean.cardano.client.crypto.cip1852.CIP1852
+import com.bloxbean.cardano.client.crypto.cip1852.DerivationPath
 
 extension (a: Array[Byte]) def toHex: String = Utils.bytesToHex(a)
 
@@ -527,7 +532,7 @@ object Bond:
         println(s"fileId: ${merkleTree.getMerkleRoot.toHex}")
     }
 
-    def encrypt(secret: String, privateKey: String) = {
+    def encrypt(secret: String) = {
         val preimage = Utils.hexToBytes(secret)
         val preimageHash = ByteString.unsafeFromArray(Utils.sha2_256(preimage))
         val encryptedChunks = ArraySeq.newBuilder[Array[Byte]]
@@ -544,17 +549,23 @@ object Bond:
         val fileId = MerkleTree.fromHashes(hashes.result()).getMerkleRoot
         val encId = MerkleTree.fromHashes(encHashes.result()).getMerkleRoot
         val claim = Builtins.appendByteString(encId, preimageHash)
-        val pk = new Ed25519PrivateKeyParameters(Utils.hexToBytes(privateKey))
-        val signature = signMessage(claim, pk)
+        val signingProvider = CryptoConfiguration.INSTANCE.getSigningProvider()
+        val mnemonic = System.getenv("MNEMONIC")
+
+        val hdKeyPair = new CIP1852().getKeyPairFromMnemonic(
+          mnemonic,
+          DerivationPath.createExternalAddressDerivationPath(0)
+        );
+        val signature = signingProvider.signExtended(claim.bytes, hdKeyPair.getPrivateKey().getKeyData())
         val fileOut = System.out
-        fileOut.write(signature.bytes)
+        fileOut.write(signature)
         fileOut.write(preimageHash.bytes)
         for (enc, hash) <- encryptedChunks.result().zip(hashes.result()) do
             fileOut.write(enc)
             fileOut.write(hash.bytes)
         System.err.println(s"preimage: ${Utils.bytesToHex(preimage)}")
         System.err.println(s"preimageHash: ${preimageHash.toHex}")
-        System.err.println(s"pubKey: ${Utils.bytesToHex(pk.generatePublicKey().getEncoded())}")
+        System.err.println(s"pubKey: ${hdKeyPair.getPublicKey().getKeyData().toHex}")
         System.err.println(s"signature: ${signature.toHex}")
         System.err.println(s"fileId: ${fileId.toHex}")
         System.err.println(s"encId: ${encId.toHex}")
@@ -709,8 +720,6 @@ object Bond:
           System.getenv("BLOCKFROST_API_KEY")
         )
 
-        println(System.getenv("BLOCKFROST_API_KEY"))
-        println(System.getenv("MNEMONIC"))
         val sender = new Account(Networks.testnet(), System.getenv("MNEMONIC"))
 
         val quickTxBuilder = new QuickTxBuilder(backendService)
@@ -737,6 +746,12 @@ object Bond:
 
     }
 
+    def showKeys() = {
+        val sender = new Account(Networks.testnet(), System.getenv("MNEMONIC"))
+        println(s"private key: ${sender.hdKeyPair().getPrivateKey().getKeyData().toHex}")
+        println(s"public key: ${sender.publicKeyBytes().toHex}")
+    }
+
     @main def main(cmd: String, others: String*) = {
         cmd match
             case "info" =>
@@ -747,9 +762,10 @@ object Bond:
                 println(s"bondProgram size: ${bondProgram.doubleCborEncoded.size}")
                 println(s"htlcProgram size: ${htlcProgram.doubleCborEncoded.size}")
             case "publish"    => publish()
-            case "encrypt"    => encrypt(others.head, others(1))
+            case "encrypt"    => encrypt(others.head)
             case "decrypt"    => decrypt(others.head, others(1))
             case "verify"     => verify(others.head)
             case "makeBondTx" => makeBondTx(others.head)
+            case "keys"       => showKeys()
 
     }
