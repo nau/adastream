@@ -3,6 +3,7 @@
 //> using plugin org.scalus:scalus-plugin_3:0.3.0
 //> using dep org.scalus:scalus_3:0.3.0
 //> using dep org.bouncycastle:bcprov-jdk18on:1.77
+//> using dep com.bloxbean.cardano:cardano-client-lib:0.5.0
 
 package adastream
 
@@ -492,75 +493,71 @@ object Bond:
     val htlcValidator = compiledHtlcScript.toUplc(generateErrorTraces = true)
     val htlcProgram = Program((2, 0, 0), htlcValidator)
 
-    def publish(file: String) = {
+    def publish() = {
+        val is = System.in
         val hashes = Encryption
-            .chunksFromInputStream(new FileInputStream(file))
+            .chunksFromInputStream(System.in)
             .map(ch => ByteString.fromArray(Utils.sha2_256(ch)))
         val merkleTree = MerkleTree.fromHashes(ArraySeq.from(hashes))
         println(s"fileId: ${merkleTree.getMerkleRoot.toHex}")
     }
 
-    def encrypt(file: String, secret: String, privateKey: String) = {
+    def encrypt(secret: String, privateKey: String) = {
         val preimage = Utils.hexToBytes(secret)
         val preimageHash = ByteString.unsafeFromArray(Utils.sha2_256(preimage))
         val encryptedChunks = ArraySeq.newBuilder[Array[Byte]]
         val hashes = ArraySeq.newBuilder[ByteString]
         val encHashes = ArraySeq.newBuilder[ByteString]
-        chunksFromInputStream(new FileInputStream(file)).zipWithIndex.foreach {
-            case (chunk, index) =>
-                val encrypted = Encryption.encryptChunk(chunk, preimage, index)
-                val hash = Utils.sha2_256(chunk)
-                val encHash = Utils.sha2_256(encrypted ++ hash)
-                encryptedChunks += encrypted
-                hashes += ByteString.unsafeFromArray(hash)
-                encHashes += ByteString.unsafeFromArray(encHash)
+        chunksFromInputStream(System.in).zipWithIndex.foreach { case (chunk, index) =>
+            val encrypted = Encryption.encryptChunk(chunk, preimage, index)
+            val hash = Utils.sha2_256(chunk)
+            val encHash = Utils.sha2_256(encrypted ++ hash)
+            encryptedChunks += encrypted
+            hashes += ByteString.unsafeFromArray(hash)
+            encHashes += ByteString.unsafeFromArray(encHash)
         }
         val fileId = MerkleTree.fromHashes(hashes.result()).getMerkleRoot
         val encId = MerkleTree.fromHashes(encHashes.result()).getMerkleRoot
         val claim = Builtins.appendByteString(encId, preimageHash)
         val pk = new Ed25519PrivateKeyParameters(Utils.hexToBytes(privateKey))
         val signature = signMessage(claim, pk)
-        val fileOut = new java.io.FileOutputStream(file + ".encrypted")
+        val fileOut = System.out
         fileOut.write(signature.bytes)
         fileOut.write(preimageHash.bytes)
         for (enc, hash) <- encryptedChunks.result().zip(hashes.result()) do
             fileOut.write(enc)
             fileOut.write(hash.bytes)
-        fileOut.close()
-        println(s"preimage: ${Utils.bytesToHex(preimage)}")
-        println(s"preimageHash: ${preimageHash.toHex}")
-        println(s"pubKey: ${Utils.bytesToHex(pk.generatePublicKey().getEncoded())}")
-        println(s"signature: ${signature.toHex}")
-        println(s"fileId: ${fileId.toHex}")
-        println(s"encId: ${encId.toHex}")
+        System.err.println(s"preimage: ${Utils.bytesToHex(preimage)}")
+        System.err.println(s"preimageHash: ${preimageHash.toHex}")
+        System.err.println(s"pubKey: ${Utils.bytesToHex(pk.generatePublicKey().getEncoded())}")
+        System.err.println(s"signature: ${signature.toHex}")
+        System.err.println(s"fileId: ${fileId.toHex}")
+        System.err.println(s"encId: ${encId.toHex}")
     }
 
     def merkleTreeFromIterator(chunks: Iterator[Array[Byte]]): MerkleTree = {
         MerkleTree.fromHashes(ArraySeq.from(chunks.map(ByteString.unsafeFromArray)))
     }
 
-    def decrypt(file: String, secret: String, publicKeyHex: String): Unit = {
+    def decrypt(secret: String, publicKeyHex: String): Unit = {
         val preimage = Utils.hexToBytes(secret)
         val preimageHash = ByteString.unsafeFromArray(Utils.sha2_256(preimage))
-        val chunks = chunksFromInputStream(new FileInputStream(file)).toArray
+        val chunks = chunksFromInputStream(System.in).toArray
         val signature = chunks(0) ++ chunks(1) // 64 bytes, 2 chunks
         val publicKeyBytes = Utils.hexToBytes(publicKeyHex)
         val paymentHash = chunks(2) // 32 bytes, 1 chunk
-        println(s"chunks: ${chunks.length}")
-        println(s"Signature: ${Utils.bytesToHex(signature)}")
-        println(
+        System.err.println(s"chunks: ${chunks.length}")
+        System.err.println(s"Signature: ${Utils.bytesToHex(signature)}")
+        System.err.println(
           s"expected preimage hash: ${preimageHash.toHex}, file preimage hash: ${Utils.bytesToHex(paymentHash)}"
         )
-
-        println(Utils.bytesToHex(chunks.iterator.drop(3).grouped(2).map(it => it(1)).next()))
-
         chunks.iterator.take(5).foreach(chunk => println(Utils.bytesToHex(chunk)))
         val fileId = merkleTreeFromIterator(
           chunks.iterator.drop(3).grouped(2).map(it => it(1))
         ).getMerkleRoot
         val encId = merkleTreeFromIterator(chunks.iterator.drop(3)).getMerkleRoot
-        println(s"fileId: ${fileId.toHex}")
-        println(s"encId: ${encId.toHex}")
+        System.err.println(s"fileId: ${fileId.toHex}")
+        System.err.println(s"encId: ${encId.toHex}")
         val claim = Builtins.appendByteString(encId, preimageHash)
         // Verify the signature
         val isVerified = {
@@ -575,10 +572,10 @@ object Bond:
         }
 
         if !isVerified then
-            println("Signature mismatch")
+            System.err.println("Signature mismatch")
             sys.exit(1)
 
-        val decryptedFile = new FileOutputStream(file + ".decrypted")
+        val decryptedFile = System.out
 
         chunks.iterator.drop(3).grouped(2).zipWithIndex.foreach { (it, index) =>
             val (encryptedChunk, hash) = (it(0), it(1))
@@ -587,32 +584,31 @@ object Bond:
             if !computedHash.sameElements(hash) then {
                 val merkleProof =
                     merkleTreeFromIterator(chunks.iterator.drop(3)).makeMerkleProof(index)
-                println(
+                System.err.println(
                   s"Computed hash: ${Utils.bytesToHex(computedHash)}, expected: ${Utils.bytesToHex(hash)}"
                 )
-                println(s"Merkle inclusion proof $merkleProof")
-                println(s"Index: $index")
+                System.err.println(s"Merkle inclusion proof $merkleProof")
+                System.err.println(s"Index: $index")
                 sys.exit(1)
             }
             decryptedFile.write(decrypted)
         }
-        decryptedFile.close()
-        println("Successfully decrypted")
+        System.err.println("Successfully decrypted")
     }
 
-    def verify(file: String, publicKeyHex: String): Unit = {
-        val chunks = chunksFromInputStream(new FileInputStream(file)).toArray
+    def verify(publicKeyHex: String): Unit = {
+        val chunks = chunksFromInputStream(System.in).toArray
         val signature = chunks(0) ++ chunks(1) // 64 bytes, 2 chunks
         val publicKeyBytes = Utils.hexToBytes(publicKeyHex)
         val paymentHash = ByteString.fromArray(chunks(2)) // 32 bytes, 1 chunk
-        println(s"chunks: ${chunks.length}")
-        println(s"Signature: ${Utils.bytesToHex(signature)}")
+        System.err.println(s"chunks: ${chunks.length}")
+        System.err.println(s"Signature: ${Utils.bytesToHex(signature)}")
         val fileId = merkleTreeFromIterator(
           chunks.iterator.drop(3).grouped(2).map(it => it(1))
         ).getMerkleRoot
         val encId = merkleTreeFromIterator(chunks.iterator.drop(3)).getMerkleRoot
-        println(s"fileId: ${fileId.toHex}")
-        println(s"encId: ${encId.toHex}")
+        System.err.println(s"fileId: ${fileId.toHex}")
+        System.err.println(s"encId: ${encId.toHex}")
         val claim = Builtins.appendByteString(encId, paymentHash)
         // Verify the signature
         val isVerified = {
@@ -627,8 +623,9 @@ object Bond:
         }
 
         if !isVerified then
-            println("Signature mismatch")
+            System.err.println("Signature mismatch")
             sys.exit(1)
+        System.err.println("Signature verified")
     }
 
     @main def main(cmd: String, others: String*) = {
@@ -640,9 +637,9 @@ object Bond:
                 // println(htlcProgram.doubleCborHex)
                 println(s"bondProgram size: ${bondProgram.doubleCborEncoded.size}")
                 println(s"htlcProgram size: ${htlcProgram.doubleCborEncoded.size}")
-            case "publish" => publish(others.head)
-            case "encrypt" => encrypt(others.head, others(1), others(2))
-            case "decrypt" => decrypt(others.head, others(1), others(2))
-            case "verify"  => verify(others.head, others(1))
+            case "publish" => publish()
+            case "encrypt" => encrypt(others.head, others(1))
+            case "decrypt" => decrypt(others.head, others(1))
+            case "verify"  => verify(others.head)
 
     }
