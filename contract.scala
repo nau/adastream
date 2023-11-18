@@ -4,6 +4,7 @@
 //> using dep org.scalus:scalus_3:0.3.0
 //> using dep org.bouncycastle:bcprov-jdk18on:1.77
 //> using dep com.bloxbean.cardano:cardano-client-lib:0.5.0
+//> using dep com.bloxbean.cardano:cardano-client-backend-blockfrost:0.5.0
 
 package adastream
 
@@ -58,6 +59,22 @@ import java.nio.file.Path
 import java.util.Arrays
 import scala.annotation.tailrec
 import scala.collection.mutable.ArrayBuffer
+import com.bloxbean.cardano.client.address.AddressProvider
+import com.bloxbean.cardano.client.plutus.spec.PlutusV2Script
+import com.bloxbean.cardano.client.common.model.Networks
+import com.bloxbean.cardano.client.backend.blockfrost.service.BFBackendService
+import com.bloxbean.cardano.client.backend.blockfrost.common.Constants
+import com.bloxbean.cardano.client.account.Account
+import com.bloxbean.cardano.client.quicktx.QuickTxBuilder
+import com.bloxbean.cardano.client.quicktx.Tx
+import com.bloxbean.cardano.client.api.model.Amount
+import com.bloxbean.cardano.client.function.helper.SignerProviders
+import org.bouncycastle.crypto.digests.Blake2bDigest
+import com.bloxbean.cardano.client.plutus.spec.BigIntPlutusData
+import com.bloxbean.cardano.client.plutus.spec.PlutusData
+import com.bloxbean.cardano.client.plutus.spec.*
+
+extension (a: Array[Byte]) def toHex: String = Utils.bytesToHex(a)
 
 @Compile
 object BondContract {
@@ -482,6 +499,14 @@ object Encryption {
         signer.init(true, privateKey);
         signer.update(claim.bytes, 0, claim.bytes.length)
         ByteString.fromArray(signer.generateSignature())
+
+    def blake2b224Hash(data: Array[Byte]): Array[Byte] = {
+        val digest = new Blake2bDigest(224) // 224 bits
+        digest.update(data, 0, data.length)
+        val hash = new Array[Byte](digest.getDigestSize)
+        digest.doFinal(hash, 0)
+        hash
+    }
 }
 
 object Bond:
@@ -628,6 +653,90 @@ object Bond:
         System.err.println("Signature verified")
     }
 
+    def dataToCardanoClientPlutusData(data: Data): PlutusData = {
+        import scala.jdk.CollectionConverters.*
+        data match
+            case Data.Constr(tag, args) =>
+                val convertedArgs = ListPlutusData
+                    .builder()
+                    .plutusDataList(args.map(dataToCardanoClientPlutusData).asJava)
+                    .build()
+                ConstrPlutusData
+                    .builder()
+                    .alternative(tag)
+                    .data(convertedArgs)
+                    .build()
+            case Data.Map(items) =>
+                MapPlutusData
+                    .builder()
+                    .map(
+                      items
+                          .map { case (k, v) =>
+                              (dataToCardanoClientPlutusData(k), dataToCardanoClientPlutusData(v))
+                          }
+                          .toMap
+                          .asJava
+                    )
+                    .build()
+            case Data.List(items) =>
+                ListPlutusData
+                    .builder()
+                    .plutusDataList(items.map(dataToCardanoClientPlutusData).asJava)
+                    .build()
+            case Data.I(i) =>
+                BigIntPlutusData.of(i.bigInteger)
+            case Data.B(b) =>
+                BytesPlutusData.of(b.bytes)
+    }
+
+    def makeBondTx(publicKeyHex: String) = {
+
+        val chunks = chunksFromInputStream(System.in).toArray
+        val signature = chunks(0) ++ chunks(1) // 64 bytes, 2 chunks
+        val publicKeyBytes = Utils.hexToBytes(publicKeyHex)
+        val paymentHash = ByteString.fromArray(chunks(2)) // 32 bytes, 1 chunk
+        val encId = merkleTreeFromIterator(chunks.iterator.drop(3)).getMerkleRoot
+        val plutusScript = PlutusV2Script
+            .builder()
+            .`type`("PlutusScriptV2")
+            .cborHex(bondProgram.cborEncoded.toHex)
+            .build();
+        val scriptAddress =
+            AddressProvider.getEntAddress(plutusScript, Networks.preview()).toBech32();
+
+        val backendService = new BFBackendService(
+          Constants.BLOCKFROST_PREVIEW_URL,
+          System.getenv("BLOCKFROST_API_KEY")
+        )
+
+        println(System.getenv("BLOCKFROST_API_KEY"))
+        println(System.getenv("MNEMONIC"))
+        val sender = new Account(Networks.testnet(), System.getenv("MNEMONIC"))
+
+        val quickTxBuilder = new QuickTxBuilder(backendService)
+        val bondConfig = BondContract.BondConfig(
+          paymentHash,
+          encId,
+          ByteString.unsafeFromArray(publicKeyBytes),
+          ByteString.unsafeFromArray(sender.getBaseAddress().getBytes())
+        )
+        val datumData = dataToCardanoClientPlutusData(bondConfig.toData)
+        val tx = new Tx()
+            .payToContract(scriptAddress, Amount.ada(100), datumData)
+            .from(sender.getBaseAddress().getAddress())
+
+        val transaction = quickTxBuilder
+            .compose(tx)
+            .withSigner(SignerProviders.signerFrom(sender))
+            .buildAndSign()
+
+        System.err.println(s"bond contract address: $scriptAddress")
+
+        println(transaction.toJson())
+        println(transaction.serializeToHex())
+
+    }
+
     @main def main(cmd: String, others: String*) = {
         cmd match
             case "info" =>
@@ -637,9 +746,10 @@ object Bond:
                 // println(htlcProgram.doubleCborHex)
                 println(s"bondProgram size: ${bondProgram.doubleCborEncoded.size}")
                 println(s"htlcProgram size: ${htlcProgram.doubleCborEncoded.size}")
-            case "publish" => publish()
-            case "encrypt" => encrypt(others.head, others(1))
-            case "decrypt" => decrypt(others.head, others(1))
-            case "verify"  => verify(others.head)
+            case "publish"    => publish()
+            case "encrypt"    => encrypt(others.head, others(1))
+            case "decrypt"    => decrypt(others.head, others(1))
+            case "verify"     => verify(others.head)
+            case "makeBondTx" => makeBondTx(others.head)
 
     }

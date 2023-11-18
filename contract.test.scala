@@ -43,6 +43,7 @@ import scala.collection.immutable.ArraySeq
 import org.scalacheck.Shrink
 import java.nio.file.Path
 import java.io.File
+import adastream.Encryption.blake2b224Hash
 
 class ContractTests extends munit.ScalaCheckSuite {
     // generate ed25519 keys
@@ -311,14 +312,6 @@ class ContractTests extends munit.ScalaCheckSuite {
             )
           )
         )
-
-    def blake2b224Hash(data: Array[Byte]): Array[Byte] = {
-        val digest = new Blake2bDigest(224) // 224 bits
-        digest.update(data, 0, data.length)
-        val hash = new Array[Byte](digest.getDigestSize)
-        digest.doFinal(hash, 0)
-        hash
-    }
 }
 
 case class Budget(cpu: Double, memory: Double)
