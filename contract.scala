@@ -6,8 +6,14 @@
 
 package adastream
 
+import adastream.Encryption.chunksFromInputStream
+import adastream.Encryption.signMessage
+import dotty.tools.dotc.util.Util
 import io.bullet.borer.Cbor
 import org.bouncycastle.crypto.digests.SHA256Digest
+import org.bouncycastle.crypto.params.Ed25519PrivateKeyParameters
+import org.bouncycastle.crypto.params.Ed25519PublicKeyParameters
+import org.bouncycastle.crypto.signers.Ed25519Signer
 import scalus.Compile
 import scalus.Compiler.compile
 import scalus.Compiler.fieldAsData
@@ -43,17 +49,14 @@ import scalus.uplc.ToData
 import scalus.uplc.ToDataInstances.given
 import scalus.utils.Utils
 
+import java.io.FileInputStream
+import java.io.FileOutputStream
+import java.io.InputStream
 import java.nio.ByteBuffer
 import java.nio.file.Path
 import java.util.Arrays
 import scala.annotation.tailrec
 import scala.collection.mutable.ArrayBuffer
-import java.io.InputStream
-import java.io.FileInputStream
-import adastream.Encryption.chunksFromInputStream
-import org.bouncycastle.crypto.params.Ed25519PrivateKeyParameters
-import org.bouncycastle.crypto.signers.Ed25519Signer
-import adastream.Encryption.signMessage
 
 @Compile
 object BondContract {
@@ -461,13 +464,17 @@ object Encryption {
         (fileId, encId)
     }
 
-    def chunksFromInputStream(inputStream: InputStream): LazyList[Array[Byte]] = {
-        if (inputStream.available() > 0) {
-            val chunk = readChunk32(inputStream)
-            chunk #:: chunksFromInputStream(inputStream)
-        } else LazyList.empty
+    def chunksFromInputStream(inputStream: InputStream): Iterator[Array[Byte]] = {
+        new Iterator[Array[Byte]] {
+            var nextChunk = readChunk32(inputStream)
+            override def hasNext: Boolean = nextChunk != null
+            override def next(): Array[Byte] = {
+                val chunk = nextChunk
+                nextChunk = readChunk32(inputStream)
+                chunk
+            }
+        }
     }
-
 
     def signMessage(claim: ByteString, privateKey: Ed25519PrivateKeyParameters): ByteString =
         val signer = new Ed25519Signer();
@@ -516,7 +523,9 @@ object Bond:
         val fileOut = new java.io.FileOutputStream(file + ".encrypted")
         fileOut.write(signature.bytes)
         fileOut.write(preimageHash.bytes)
-        encryptedChunks.result().foreach(chunk => fileOut.write(chunk))
+        for (enc, hash) <- encryptedChunks.result().zip(hashes.result()) do
+            fileOut.write(enc)
+            fileOut.write(hash.bytes)
         fileOut.close()
         println(s"preimage: ${Utils.bytesToHex(preimage)}")
         println(s"preimageHash: ${preimageHash.toHex}")
@@ -524,6 +533,71 @@ object Bond:
         println(s"signature: ${signature.toHex}")
         println(s"fileId: ${fileId.toHex}")
         println(s"encId: ${encId.toHex}")
+    }
+
+    def merkleTreeFromIterator(chunks: Iterator[Array[Byte]]): MerkleTree = {
+        MerkleTree.fromHashes(ArraySeq.from(chunks.map(ByteString.unsafeFromArray)))
+    }
+
+    def decrypt(file: String, secret: String, publicKeyHex: String): Unit = {
+        val preimage = Utils.hexToBytes(secret)
+        val preimageHash = ByteString.unsafeFromArray(Utils.sha2_256(preimage))
+        val chunks = chunksFromInputStream(new FileInputStream(file)).toArray
+        val signature = chunks(0) ++ chunks(1) // 64 bytes, 2 chunks
+        val publicKeyBytes = Utils.hexToBytes(publicKeyHex)
+        val paymentHash = chunks(2) // 32 bytes, 1 chunk
+        println(s"chunks: ${chunks.length}")
+        println(s"Signature: ${Utils.bytesToHex(signature)}")
+        println(
+          s"expected preimage hash: ${preimageHash.toHex}, file preimage hash: ${Utils.bytesToHex(paymentHash)}"
+        )
+
+        println(Utils.bytesToHex(chunks.iterator.drop(3).grouped(2).map(it => it(1)).next()))
+
+        chunks.iterator.take(5).foreach(chunk => println(Utils.bytesToHex(chunk)))
+        val fileId = merkleTreeFromIterator(
+          chunks.iterator.drop(3).grouped(2).map(it => it(1))
+        ).getMerkleRoot
+        val encId = merkleTreeFromIterator(chunks.iterator.drop(3)).getMerkleRoot
+        println(s"fileId: ${fileId.toHex}")
+        println(s"encId: ${encId.toHex}")
+        val claim = Builtins.appendByteString(encId, preimageHash)
+        // Verify the signature
+        val isVerified = {
+            // Load the public key
+            val publicKeyParams = new Ed25519PublicKeyParameters(publicKeyBytes, 0)
+
+            // Prepare the signer for verification
+            val signer = new Ed25519Signer()
+            signer.init(false, publicKeyParams)
+            signer.update(claim.bytes, 0, claim.bytes.length)
+            signer.verifySignature(signature)
+        }
+
+        if !isVerified then
+            println("Signature mismatch")
+            sys.exit(1)
+
+        val decryptedFile = new FileOutputStream(file + ".decrypted")
+
+        chunks.iterator.drop(3).grouped(2).zipWithIndex.foreach { (it, index) =>
+            val (encryptedChunk, hash) = (it(0), it(1))
+            val decrypted = Encryption.decryptChunk(encryptedChunk, preimage, index)
+            val computedHash = Utils.sha2_256(decrypted)
+            if !computedHash.sameElements(hash) then {
+                val merkleProof =
+                    merkleTreeFromIterator(chunks.iterator.drop(3)).makeMerkleProof(index)
+                println(
+                  s"Computed hash: ${Utils.bytesToHex(computedHash)}, expected: ${Utils.bytesToHex(hash)}"
+                )
+                println(s"Merkle inclusion proof $merkleProof")
+                println(s"Index: $index")
+                sys.exit(1)
+            }
+            decryptedFile.write(decrypted)
+        }
+        decryptedFile.close()
+        println("Successfully decrypted")
     }
 
     @main def main(cmd: String, others: String*) = {
@@ -537,5 +611,6 @@ object Bond:
                 println(s"htlcProgram size: ${htlcProgram.doubleCborEncoded.size}")
             case "publish" => publish(others.head)
             case "encrypt" => encrypt(others.head, others(1), others(2))
+            case "decrypt" => decrypt(others.head, others(1), others(2))
 
     }
