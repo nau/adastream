@@ -600,6 +600,37 @@ object Bond:
         println("Successfully decrypted")
     }
 
+    def verify(file: String, publicKeyHex: String): Unit = {
+        val chunks = chunksFromInputStream(new FileInputStream(file)).toArray
+        val signature = chunks(0) ++ chunks(1) // 64 bytes, 2 chunks
+        val publicKeyBytes = Utils.hexToBytes(publicKeyHex)
+        val paymentHash = ByteString.fromArray(chunks(2)) // 32 bytes, 1 chunk
+        println(s"chunks: ${chunks.length}")
+        println(s"Signature: ${Utils.bytesToHex(signature)}")
+        val fileId = merkleTreeFromIterator(
+          chunks.iterator.drop(3).grouped(2).map(it => it(1))
+        ).getMerkleRoot
+        val encId = merkleTreeFromIterator(chunks.iterator.drop(3)).getMerkleRoot
+        println(s"fileId: ${fileId.toHex}")
+        println(s"encId: ${encId.toHex}")
+        val claim = Builtins.appendByteString(encId, paymentHash)
+        // Verify the signature
+        val isVerified = {
+            // Load the public key
+            val publicKeyParams = new Ed25519PublicKeyParameters(publicKeyBytes, 0)
+
+            // Prepare the signer for verification
+            val signer = new Ed25519Signer()
+            signer.init(false, publicKeyParams)
+            signer.update(claim.bytes, 0, claim.bytes.length)
+            signer.verifySignature(signature)
+        }
+
+        if !isVerified then
+            println("Signature mismatch")
+            sys.exit(1)
+    }
+
     @main def main(cmd: String, others: String*) = {
         cmd match
             case "info" =>
@@ -612,5 +643,6 @@ object Bond:
             case "publish" => publish(others.head)
             case "encrypt" => encrypt(others.head, others(1), others(2))
             case "decrypt" => decrypt(others.head, others(1), others(2))
+            case "verify"  => verify(others.head, others(1))
 
     }
