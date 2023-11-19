@@ -83,6 +83,7 @@ import com.bloxbean.cardano.client.backend.api.DefaultUtxoSupplier
 import com.bloxbean.cardano.client.quicktx.ScriptTx
 import com.bloxbean.cardano.client.api.TransactionEvaluator
 import com.bloxbean.cardano.client.api.model.Result
+import scala.util.Random
 
 extension (a: Array[Byte]) def toHex: String = Utils.bytesToHex(a)
 
@@ -537,14 +538,21 @@ object Bond:
         println(s"fileId: ${merkleTree.getMerkleRoot.toHex}")
     }
 
-    def encrypt(secret: String) = {
+    def encrypt(secret: String, encryptIncorrectly: Boolean) = {
         val preimage = Utils.hexToBytes(secret)
         val preimageHash = ByteString.unsafeFromArray(Utils.sha2_256(preimage))
         val encryptedChunks = ArraySeq.newBuilder[Array[Byte]]
         val hashes = ArraySeq.newBuilder[ByteString]
         val encHashes = ArraySeq.newBuilder[ByteString]
-        chunksFromInputStream(System.in).zipWithIndex.foreach { case (chunk, index) =>
-            val encrypted = Encryption.encryptChunk(chunk, preimage, index)
+        val chunks = chunksFromInputStream(System.in).toArray
+        val randomWrongChunkIndex = Random.nextInt(chunks.length)
+        System.err.println(s"randomWrongChunkIndex: $randomWrongChunkIndex")
+        chunks.zipWithIndex.foreach { case (chunk, index) =>
+            val encrypted =
+                val encrypted = Encryption.encryptChunk(chunk, preimage, index)
+                if encryptIncorrectly && randomWrongChunkIndex == index
+                then encrypted.updated(0, (encrypted(0) + 1).toByte)
+                else encrypted
             val hash = Utils.sha2_256(chunk)
             val encHash = Utils.sha2_256(encrypted ++ hash)
             encryptedChunks += encrypted
@@ -816,12 +824,13 @@ object Bond:
                 // println(htlcProgram.doubleCborHex)
                 println(s"bondProgram size: ${bondProgram.doubleCborEncoded.size}")
                 println(s"htlcProgram size: ${htlcProgram.doubleCborEncoded.size}")
-            case "publish"    => publish()
-            case "encrypt"    => encrypt(others.head)
-            case "decrypt"    => decrypt(others.head, others(1))
-            case "verify"     => verify(others.head)
-            case "makeBondTx" => makeBondTx()
-            case "withdraw"   => withdraw(others.head, others(1))
-            case "keys"       => showKeys()
+            case "publish"       => publish()
+            case "encrypt"       => encrypt(others.head, encryptIncorrectly = false)
+            case "encrypt-wrong" => encrypt(others.head, encryptIncorrectly = true)
+            case "decrypt"       => decrypt(others.head, others(1))
+            case "verify"        => verify(others.head)
+            case "makeBondTx"    => makeBondTx()
+            case "withdraw"      => withdraw(others.head, others(1))
+            case "keys"          => showKeys()
 
     }
