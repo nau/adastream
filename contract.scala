@@ -84,6 +84,9 @@ import com.bloxbean.cardano.client.quicktx.ScriptTx
 import com.bloxbean.cardano.client.api.TransactionEvaluator
 import com.bloxbean.cardano.client.api.model.Result
 import scala.util.Random
+import adastream.BondContract.BondConfig
+import adastream.BondContract.BondAction
+import adastream.Encryption.blake2b224Hash
 
 extension (a: Array[Byte]) def toHex: String = Utils.bytesToHex(a)
 
@@ -589,7 +592,7 @@ object Bond:
         MerkleTree.fromHashes(ArraySeq.from(chunks.map(ByteString.unsafeFromArray)))
     }
 
-    def decrypt(secret: String, publicKeyHex: String): Unit = {
+    def decrypt(secret: String, publicKeyHex: String, spendIfWrong: Boolean = false): Unit = {
         val preimage = Utils.hexToBytes(secret)
         val preimageHash = ByteString.unsafeFromArray(Utils.sha2_256(preimage))
         val chunks = chunksFromInputStream(System.in).toArray
@@ -639,6 +642,18 @@ object Bond:
                 )
                 System.err.println(s"Merkle inclusion proof $merkleProof")
                 System.err.println(s"Index: $index")
+                if spendIfWrong then
+                    System.err.println("Spending the bond")
+                    spendBondWithFraudProof(
+                      ByteString.unsafeFromArray(signature),
+                      ByteString.unsafeFromArray(preimage),
+                      ByteString.unsafeFromArray(encryptedChunk),
+                      ByteString.unsafeFromArray(hash),
+                      index,
+                      encId.toHex,
+                      merkleProof
+                    )
+
                 sys.exit(1)
             }
             decryptedFile.write(decrypted)
@@ -676,6 +691,20 @@ object Bond:
             System.err.println("Signature mismatch")
             sys.exit(1)
         System.err.println("Signature verified")
+
+        val bondConfig = BondContract.BondConfig(
+          paymentHash,
+          encId,
+          ByteString.fromArray(publicKeyBytes),
+          ByteString.fromArray(blake2b224Hash(publicKeyBytes))
+        )
+        val result = findBondUtxo(bondConfig)
+        println(s"bondConfig: $bondConfig")
+        if result.isPresent()
+        then System.err.println(s"Found bond utxo: ${result.get()}")
+        else
+            System.err.println("Bond does not exist")
+            sys.exit(1)
     }
 
     def dataToCardanoClientPlutusData(data: Data): PlutusData = {
@@ -756,9 +785,7 @@ object Bond:
         println(result)
     }
 
-    def withdraw(preimage: String, encId: String) = {
-        val paymentHash = ByteString.unsafeFromArray(Utils.sha2_256(Utils.hexToBytes(preimage)))
-        val sender = new Account(Networks.testnet(), System.getenv("MNEMONIC"))
+    def findBondUtxo(bondConfig: BondConfig) = {
         val plutusScript = PlutusV2Script
             .builder()
             .`type`("PlutusScriptV2")
@@ -773,12 +800,66 @@ object Bond:
           System.getenv("BLOCKFROST_API_KEY")
         )
         val utxoSupplier = new DefaultUtxoSupplier(backendService.getUtxoService())
+        val datumData = dataToCardanoClientPlutusData(bondConfig.toData)
+        ScriptUtxoFinders.findFirstByInlineDatum(utxoSupplier, scriptAddress, datumData)
+    }
+
+    def spendBondWithFraudProof(
+        signature: ByteString,
+        preimage: ByteString,
+        encryptedChunk: ByteString,
+        chunkHash: ByteString,
+        chunkIndex: BigInt,
+        encId: String,
+        merkleProof: Seq[ByteString]
+    ) = {
+        val sender = new Account(Networks.testnet(), System.getenv("MNEMONIC"))
+        val paymentHash = ByteString.unsafeFromArray(Utils.sha2_256(preimage.bytes))
         val bondConfig = BondContract.BondConfig(
           paymentHash,
           ByteString.fromHex(encId),
           ByteString.unsafeFromArray(sender.hdKeyPair().getPublicKey().getKeyData()),
           ByteString.unsafeFromArray(sender.hdKeyPair().getPublicKey().getKeyHash())
         )
+        System.err.println(s"bondConfig: $bondConfig")
+        val fraudProof = BondAction.FraudProof(
+          signature = signature,
+          preimage = preimage,
+          encryptedChunk = encryptedChunk,
+          chunkHash = chunkHash,
+          chunkIndex = chunkIndex,
+          merkleProof = scalus.prelude.List(merkleProof: _*)
+        )
+        spendBond(sender, bondConfig, fraudProof)
+    }
+
+    def withdraw(preimage: String, encId: String) = {
+        val sender = new Account(Networks.testnet(), System.getenv("MNEMONIC"))
+        val paymentHash = ByteString.unsafeFromArray(Utils.sha2_256(Utils.hexToBytes(preimage)))
+        val bondConfig = BondContract.BondConfig(
+          paymentHash,
+          ByteString.fromHex(encId),
+          ByteString.unsafeFromArray(sender.hdKeyPair().getPublicKey().getKeyData()),
+          ByteString.unsafeFromArray(sender.hdKeyPair().getPublicKey().getKeyHash())
+        )
+        spendBond(sender, bondConfig, BondAction.Withdraw(ByteString.fromHex(preimage)))
+    }
+
+    def spendBond(sender: Account, bondConfig: BondConfig, bondAction: BondAction) = {
+        val plutusScript = PlutusV2Script
+            .builder()
+            .`type`("PlutusScriptV2")
+            .cborHex(bondProgram.doubleCborHex)
+            .build();
+
+        val scriptAddress =
+            AddressProvider.getEntAddress(plutusScript, Networks.preview()).toBech32()
+
+        val backendService = new BFBackendService(
+          Constants.BLOCKFROST_PREVIEW_URL,
+          System.getenv("BLOCKFROST_API_KEY")
+        )
+        val utxoSupplier = new DefaultUtxoSupplier(backendService.getUtxoService())
         val datumData = dataToCardanoClientPlutusData(bondConfig.toData)
         // val datumData = PlutusData.unit()
         val utxo =
@@ -786,10 +867,7 @@ object Bond:
 
         println(s"found utxo: $utxo")
 
-        val redeemer = dataToCardanoClientPlutusData(
-          BondContract.BondAction.Withdraw(ByteString.fromHex(preimage)).toData
-        )
-        // val redeemer = PlutusData.unit()
+        val redeemer = dataToCardanoClientPlutusData(bondAction.toData)
         val scriptTx = new ScriptTx()
             .collectFrom(utxo, redeemer)
             .payToAddress(sender.baseAddress(), utxo.getAmount())
@@ -827,7 +905,8 @@ object Bond:
             case "publish"       => publish()
             case "encrypt"       => encrypt(others.head, encryptIncorrectly = false)
             case "encrypt-wrong" => encrypt(others.head, encryptIncorrectly = true)
-            case "decrypt"       => decrypt(others.head, others(1))
+            case "decrypt"       => decrypt(others.head, others(1), spendIfWrong = false)
+            case "spend-bond"    => decrypt(others.head, others(1), spendIfWrong = true)
             case "verify"        => verify(others.head)
             case "makeBondTx"    => makeBondTx()
             case "withdraw"      => withdraw(others.head, others(1))
