@@ -76,13 +76,13 @@ If you want to test the fraud proof, you can produce a wrongly encrypted file.
 ### Create a bond contract transaction on Cardano Preview network
 
 ```bash
-  scala-cli contract.scala -- bond
+  cat bitcoin.pdf.encrypted | scala-cli contract.scala -- bond
 ```
 
 ### Create a bond withdraw transaction on Cardano Preview network
 
 ```bash
-  scala-cli contract.scala -- withdraw $preimage $encId
+  cat bitcoin.pdf.encrypted | scala-cli contract.scala -- withdraw $preimage $encId
 ```
 
 ### Decrypt a file
@@ -94,7 +94,7 @@ If you want to test the fraud proof, you can produce a wrongly encrypted file.
 ### Create a fraud proof transaction on Cardano Preview network
 
 ```bash
-  scala-cli contract.scala -- spend-bond $preimage $pubKeyHex > /dev/null
+  cat bitcoin.pdf.encrypted-wrong | scala-cli contract.scala -- spend-bond $preimage $pubKeyHex > /dev/null
 ```
 
 ## On-Chain example
