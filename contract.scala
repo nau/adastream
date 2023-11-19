@@ -922,7 +922,7 @@ object Bond:
             case "decrypt"       => decrypt(others.head, others(1), spendIfWrong = false)
             case "spend-bond"    => decrypt(others.head, others(1), spendIfWrong = true)
             case "verify"        => verify(others.head)
-            case "makeBondTx"    => makeBondTx()
+            case "bond"          => makeBondTx()
             case "withdraw"      => withdraw(others.head, others(1))
             case "keys"          => showKeys()
 
