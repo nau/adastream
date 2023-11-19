@@ -125,7 +125,7 @@ class ContractTests extends munit.ScalaCheckSuite {
     property("Client can spend with valid fraud proof") {
         val gen = for
             numChuns <- Gen.frequency(
-              (100, Gen.choose(1, 1000)),
+              (500, Gen.choose(1, 1000)),
               (5, Gen.choose(10_000, 100_000)),
               (1, Gen.choose(1000_000, 2000_000))
             )

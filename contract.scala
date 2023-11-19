@@ -203,8 +203,8 @@ object BondContract {
                 case Nil => curHash
                 case Cons(sibling, rest) =>
                     val nextHash =
-                        if index % 2 == BigInt(0) then
-                            Builtins.sha2_256(Builtins.appendByteString(curHash, sibling))
+                        if index % 2 == BigInt(0)
+                        then Builtins.sha2_256(Builtins.appendByteString(curHash, sibling))
                         else Builtins.sha2_256(Builtins.appendByteString(sibling, curHash))
                     loop(index / 2, nextHash, rest)
 
@@ -636,7 +636,11 @@ object Bond:
             val computedHash = Utils.sha2_256(decrypted)
             if !computedHash.sameElements(hash) then {
                 val merkleProof =
-                    merkleTreeFromIterator(chunks.iterator.drop(3)).makeMerkleProof(index)
+                    // drop the first layer as it is (enc, hash) pairs
+                    // and in BondContract we use hash(enc ++ hash) as the leaf hash
+                    merkleTreeFromIterator(chunks.iterator.drop(3))
+                        .makeMerkleProof(index * 2)
+                        .drop(1)
                 System.err.println(
                   s"Computed hash: ${Utils.bytesToHex(computedHash)}, expected: ${Utils.bytesToHex(hash)}"
                 )
@@ -698,8 +702,18 @@ object Bond:
           ByteString.fromArray(publicKeyBytes),
           ByteString.fromArray(blake2b224Hash(publicKeyBytes))
         )
+        val plutusScript = PlutusV2Script
+            .builder()
+            .`type`("PlutusScriptV2")
+            .cborHex(bondProgram.doubleCborHex)
+            .build();
+
+        val scriptAddress =
+            AddressProvider.getEntAddress(plutusScript, Networks.preview()).toBech32()
         val result = findBondUtxo(bondConfig)
-        println(s"bondConfig: $bondConfig")
+        System.err.println(
+          s"Looking up for bond UTxO with address ${scriptAddress} and bondConfig: $bondConfig"
+        )
         if result.isPresent()
         then System.err.println(s"Found bond utxo: ${result.get()}")
         else
@@ -865,7 +879,7 @@ object Bond:
         val utxo =
             ScriptUtxoFinders.findFirstByInlineDatum(utxoSupplier, scriptAddress, datumData).get
 
-        println(s"found utxo: $utxo")
+        System.err.println(s"found utxo: $utxo")
 
         val redeemer = dataToCardanoClientPlutusData(bondAction.toData)
         val scriptTx = new ScriptTx()
@@ -882,9 +896,9 @@ object Bond:
             .withRequiredSigners(pubKeyHashBytes)
             .ignoreScriptCostEvaluationError(false)
             .buildAndSign()
-        println(tx.toJson())
+        System.err.println(tx.toJson())
         val result = backendService.getTransactionService().submitTransaction(tx.serialize())
-        println(result)
+        System.err.println(result)
     }
 
     def showKeys() = {
