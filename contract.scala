@@ -81,6 +81,8 @@ import com.bloxbean.cardano.client.crypto.cip1852.DerivationPath
 import com.bloxbean.cardano.client.function.helper.ScriptUtxoFinders
 import com.bloxbean.cardano.client.backend.api.DefaultUtxoSupplier
 import com.bloxbean.cardano.client.quicktx.ScriptTx
+import com.bloxbean.cardano.client.api.TransactionEvaluator
+import com.bloxbean.cardano.client.api.model.Result
 
 extension (a: Array[Byte]) def toHex: String = Utils.bytesToHex(a)
 
@@ -520,11 +522,11 @@ object Encryption {
 object Bond:
     val compiledBondScript = compile(BondContract.bondContractValidator)
     val bondValidator = compiledBondScript.toUplc(generateErrorTraces = true)
-    val bondProgram = Program((2, 0, 0), bondValidator)
+    val bondProgram = Program((1, 0, 0), bondValidator)
     val compiledHtlcScript = compile(BondContract.makeHtlcContractValidator)
     val xorBytesScript = compile(BondContract.xorBytes).toUplc(generateErrorTraces = true)
     val htlcValidator = compiledHtlcScript.toUplc(generateErrorTraces = true)
-    val htlcProgram = Program((2, 0, 0), htlcValidator)
+    val htlcProgram = Program((1, 0, 0), htlcValidator)
 
     def publish() = {
         val is = System.in
@@ -734,6 +736,7 @@ object Bond:
           ByteString.unsafeFromArray(sender.hdKeyPair().getPublicKey().getKeyHash())
         )
         val datumData = dataToCardanoClientPlutusData(bondConfig.toData)
+        // val datumData = PlutusData.unit()
         val tx = new Tx()
             .payToContract(scriptAddress, Amount.ada(100), datumData)
             .from(sender.getBaseAddress().getAddress())
@@ -769,22 +772,29 @@ object Bond:
           ByteString.unsafeFromArray(sender.hdKeyPair().getPublicKey().getKeyHash())
         )
         val datumData = dataToCardanoClientPlutusData(bondConfig.toData)
+        // val datumData = PlutusData.unit()
         val utxo =
             ScriptUtxoFinders.findFirstByInlineDatum(utxoSupplier, scriptAddress, datumData).get
 
         println(s"found utxo: $utxo")
 
-        val redeemer = BondContract.BondAction.Withdraw(ByteString.fromHex(preimage)).toData
+        val redeemer = dataToCardanoClientPlutusData(
+          BondContract.BondAction.Withdraw(ByteString.fromHex(preimage)).toData
+        )
+        // val redeemer = PlutusData.unit()
         val scriptTx = new ScriptTx()
-            .collectFrom(utxo, dataToCardanoClientPlutusData(redeemer))
+            .collectFrom(utxo, redeemer)
             .payToAddress(sender.baseAddress(), utxo.getAmount())
             .attachSpendingValidator(plutusScript)
 
+        val pubKeyHashBytes = sender.hdKeyPair().getPublicKey().getKeyHash()
         val quickTxBuilder = new QuickTxBuilder(backendService)
         val tx = quickTxBuilder
             .compose(scriptTx)
             .feePayer(sender.baseAddress())
             .withSigner(SignerProviders.signerFrom(sender))
+            .withRequiredSigners(pubKeyHashBytes)
+            .ignoreScriptCostEvaluationError(false)
             .buildAndSign()
         println(tx.toJson())
         val result = backendService.getTransactionService().submitTransaction(tx.serialize())

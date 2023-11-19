@@ -21,7 +21,7 @@
         devShell = pkgs.mkShell {
           nativeBuildInputs = [
             pkgs.scala-cli
-            pkgs.jdk21
+            pkgs.jdk19
             patchedUplc
           ];
           # Set any environment variables or shell hooks if needed
