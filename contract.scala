@@ -1,7 +1,7 @@
-//> using scala 3.3.0
+//> using scala 3.3.1
 //> using toolkit 0.2.1
-//> using plugin org.scalus:scalus-plugin_3:0.3.0
-//> using dep org.scalus:scalus_3:0.3.0
+//> using plugin org.scalus:scalus-plugin_3:0.4.1
+//> using dep org.scalus:scalus_3:0.4.1
 //> using dep org.bouncycastle:bcprov-jdk18on:1.77
 //> using dep net.i2p.crypto:eddsa:0.3.0
 //> using dep com.bloxbean.cardano:cardano-client-lib:0.5.0
@@ -23,6 +23,7 @@ import scalus.Compiler.fieldAsData
 import scalus.*
 import scalus.builtins.Builtins
 import scalus.builtins.ByteString
+import scalus.builtins.given
 import scalus.ledger.api.v1.Extended
 import scalus.ledger.api.v1.FromDataInstances.given
 import scalus.ledger.api.v1.POSIXTime

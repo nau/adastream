@@ -1,8 +1,8 @@
-//> using scala 3.3.0
+//> using scala 3.3.1
 //> using test.dep org.scalameta::munit::1.0.0-M10
 //> using test.dep org.scalameta::munit-scalacheck::1.0.0-M10
 //> using test.dep org.scalacheck::scalacheck::1.17.0
-//> using dep org.scalus:scalus_3:0.3.0
+//> using dep org.scalus:scalus_3:0.4.1
 //> using dep org.bouncycastle:bcprov-jdk18on:1.77
 //> using dep com.bloxbean.cardano:cardano-client-lib:0.5.0
 
@@ -70,7 +70,7 @@ class ContractTests extends munit.ScalaCheckSuite {
     )
 
     test(s"bondProgram size is ${Bond.bondProgram.doubleCborEncoded.size}".ignore) {
-        assert(Bond.bondProgram.doubleCborEncoded.size == 938)
+        assert(Bond.bondProgram.doubleCborEncoded.size == 1140)
     }
 
     test("Server can withdraw with valid preimage and signature") {
