@@ -2,48 +2,47 @@
 //> using test.dep org.scalameta::munit::1.0.0-M10
 //> using test.dep org.scalameta::munit-scalacheck::1.0.0-M10
 //> using test.dep org.scalacheck::scalacheck::1.17.0
-//> using dep org.scalus:scalus_3:0.4.1
+//> using dep org.scalus:scalus_3:0.4.1+40-77c5e6d4-SNAPSHOT
 //> using dep org.bouncycastle:bcprov-jdk18on:1.77
 //> using dep com.bloxbean.cardano:cardano-client-lib:0.5.0
 
 package adastream
 
-import org.scalacheck.Prop.*
-import scalus.builtins.ByteString
-import org.scalacheck.Gen
-import org.scalacheck.Arbitrary
-import java.io.ByteArrayInputStream
-import scalus.builtins.Builtins
-import scalus.toUplc
-import scalus.uplc.Data.toData
-import scalus.utils.Utils
-import scalus.uplc.Program
-import scalus.uplc.TermDSL.{*, given}
-import scalus.uplc.ToDataInstances.given
-import scalus.ledger.api.v2.ToDataInstances.given
-import adastream.BondContract.BondConfig
 import adastream.BondContract.BondAction
-import scalus.ledger.api.v1.PubKeyHash
-import scalus.ledger.api.v2.*
-import scalus.builtins.ByteString.StringInterpolators
-import scalus.ledger.api.v1.PubKeyHash
-import scalus.uplc.Term
-import scalus.uplc.UplcParser
-import scala.util.matching.Regex
-import java.security.SecureRandom
+import adastream.BondContract.BondConfig
+import adastream.Encryption.blake2b224Hash
+import com.bloxbean.cardano.client.crypto.api.impl.EdDSASigningProvider
+import org.bouncycastle.crypto.digests.Blake2bDigest
 import org.bouncycastle.crypto.generators.Ed25519KeyPairGenerator
 import org.bouncycastle.crypto.params.Ed25519KeyGenerationParameters
 import org.bouncycastle.crypto.params.Ed25519PrivateKeyParameters
 import org.bouncycastle.crypto.params.Ed25519PublicKeyParameters
 import org.bouncycastle.crypto.signers.Ed25519Signer
-import java.nio.charset.StandardCharsets
-import com.bloxbean.cardano.client.crypto.api.impl.EdDSASigningProvider
-import org.bouncycastle.crypto.digests.Blake2bDigest
-import scala.collection.immutable.ArraySeq
+import org.scalacheck.Arbitrary
+import org.scalacheck.Gen
+import org.scalacheck.Prop.*
 import org.scalacheck.Shrink
-import java.nio.file.Path
+import scalus.builtin.Builtins
+import scalus.builtin.ByteString
+import scalus.builtin.ByteString.StringInterpolators
+import scalus.ledger.api.v2.ToDataInstances.given
+import scalus.ledger.api.v2.*
+import scalus.toUplc
+import scalus.uplc.Data.toData
+import scalus.uplc.Program
+import scalus.uplc.Term
+import scalus.uplc.TermDSL.{*, given}
+import scalus.uplc.ToDataInstances.given
+import scalus.uplc.UplcParser
+import scalus.utils.Utils
+
+import java.io.ByteArrayInputStream
 import java.io.File
-import adastream.Encryption.blake2b224Hash
+import java.nio.charset.StandardCharsets
+import java.nio.file.Path
+import java.security.SecureRandom
+import scala.collection.immutable.ArraySeq
+import scala.util.matching.Regex
 
 class ContractTests extends munit.ScalaCheckSuite {
     // generate ed25519 keys

@@ -4,7 +4,7 @@
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
     flake-utils.url = "github:numtide/flake-utils";
-    plutus.url = "github:input-output-hk/plutus/914b7f3108362cfa925810af8082d2ad5564c7b2";
+    plutus.url = "github:input-output-hk/plutus/e2cbee0d31da1b2dfa42cc76fb112dc69fa06798";
   };
 
   outputs = { self, nixpkgs, flake-utils, plutus, ... }:

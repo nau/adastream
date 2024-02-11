@@ -1,7 +1,7 @@
 //> using scala 3.3.1
 //> using toolkit 0.2.1
-//> using plugin org.scalus:scalus-plugin_3:0.4.1
-//> using dep org.scalus:scalus_3:0.4.1
+//> using plugin org.scalus:scalus-plugin_3:0.4.1+40-77c5e6d4-SNAPSHOT
+//> using dep org.scalus:scalus_3:0.4.1+40-77c5e6d4-SNAPSHOT
 //> using dep org.bouncycastle:bcprov-jdk18on:1.77
 //> using dep net.i2p.crypto:eddsa:0.3.0
 //> using dep com.bloxbean.cardano:cardano-client-lib:0.5.0
@@ -9,10 +9,36 @@
 
 package adastream
 
+import adastream.BondContract.BondAction
+import adastream.BondContract.BondConfig
+import adastream.Encryption.blake2b224Hash
 import adastream.Encryption.chunksFromInputStream
 import adastream.Encryption.signMessage
+import com.bloxbean.cardano.client.account.Account
+import com.bloxbean.cardano.client.address.AddressProvider
+import com.bloxbean.cardano.client.api.TransactionEvaluator
+import com.bloxbean.cardano.client.api.model.Amount
+import com.bloxbean.cardano.client.api.model.Result
+import com.bloxbean.cardano.client.backend.api.DefaultUtxoSupplier
+import com.bloxbean.cardano.client.backend.blockfrost.common.Constants
+import com.bloxbean.cardano.client.backend.blockfrost.service.BFBackendService
+import com.bloxbean.cardano.client.common.model.Networks
+import com.bloxbean.cardano.client.crypto.cip1852.CIP1852
+import com.bloxbean.cardano.client.crypto.cip1852.DerivationPath
+import com.bloxbean.cardano.client.crypto.config.CryptoConfiguration
+import com.bloxbean.cardano.client.function.helper.ScriptUtxoFinders
+import com.bloxbean.cardano.client.function.helper.SignerProviders
+import com.bloxbean.cardano.client.plutus.spec.BigIntPlutusData
+import com.bloxbean.cardano.client.plutus.spec.PlutusData
+import com.bloxbean.cardano.client.plutus.spec.PlutusV2Script
+import com.bloxbean.cardano.client.plutus.spec.*
+import com.bloxbean.cardano.client.quicktx.QuickTxBuilder
+import com.bloxbean.cardano.client.quicktx.ScriptTx
+import com.bloxbean.cardano.client.quicktx.Tx
 import dotty.tools.dotc.util.Util
 import io.bullet.borer.Cbor
+import net.i2p.crypto.eddsa.EdDSAEngine
+import org.bouncycastle.crypto.digests.Blake2bDigest
 import org.bouncycastle.crypto.digests.SHA256Digest
 import org.bouncycastle.crypto.params.Ed25519PrivateKeyParameters
 import org.bouncycastle.crypto.params.Ed25519PublicKeyParameters
@@ -21,12 +47,18 @@ import scalus.Compile
 import scalus.Compiler.compile
 import scalus.Compiler.fieldAsData
 import scalus.*
-import scalus.builtins.Builtins
-import scalus.builtins.ByteString
-import scalus.builtins.given
+import scalus.builtin.Builtins
+import scalus.builtin.ByteString
+import scalus.builtin.Data
+import scalus.builtin.Data.FromData
+import scalus.builtin.Data.ToData
+import scalus.builtin.Data.fromData
+import scalus.builtin.Data.toData
+import scalus.builtin.FromData
+import scalus.builtin.FromDataInstances.given
+import scalus.builtin.given
 import scalus.ledger.api.v1.Extended
 import scalus.ledger.api.v1.FromDataInstances.given
-import scalus.ledger.api.v1.POSIXTime
 import scalus.ledger.api.v2.FromDataInstances.given
 import scalus.ledger.api.v2.ScriptPurpose.*
 import scalus.ledger.api.v2.*
@@ -39,13 +71,6 @@ import scalus.pretty
 import scalus.sir.SIR
 import scalus.sir.SimpleSirToUplcLowering
 import scalus.uplc.Cek
-import scalus.uplc.Data
-import scalus.uplc.Data.FromData
-import scalus.uplc.Data.ToData
-import scalus.uplc.Data.fromData
-import scalus.uplc.Data.toData
-import scalus.uplc.FromData
-import scalus.uplc.FromDataInstances.given
 import scalus.uplc.Program
 import scalus.uplc.ProgramFlatCodec
 import scalus.uplc.Term
@@ -61,33 +86,7 @@ import java.nio.file.Path
 import java.util.Arrays
 import scala.annotation.tailrec
 import scala.collection.mutable.ArrayBuffer
-import com.bloxbean.cardano.client.address.AddressProvider
-import com.bloxbean.cardano.client.plutus.spec.PlutusV2Script
-import com.bloxbean.cardano.client.common.model.Networks
-import com.bloxbean.cardano.client.backend.blockfrost.service.BFBackendService
-import com.bloxbean.cardano.client.backend.blockfrost.common.Constants
-import com.bloxbean.cardano.client.account.Account
-import com.bloxbean.cardano.client.quicktx.QuickTxBuilder
-import com.bloxbean.cardano.client.quicktx.Tx
-import com.bloxbean.cardano.client.api.model.Amount
-import com.bloxbean.cardano.client.function.helper.SignerProviders
-import org.bouncycastle.crypto.digests.Blake2bDigest
-import com.bloxbean.cardano.client.plutus.spec.BigIntPlutusData
-import com.bloxbean.cardano.client.plutus.spec.PlutusData
-import com.bloxbean.cardano.client.plutus.spec.*
-import net.i2p.crypto.eddsa.EdDSAEngine
-import com.bloxbean.cardano.client.crypto.config.CryptoConfiguration
-import com.bloxbean.cardano.client.crypto.cip1852.CIP1852
-import com.bloxbean.cardano.client.crypto.cip1852.DerivationPath
-import com.bloxbean.cardano.client.function.helper.ScriptUtxoFinders
-import com.bloxbean.cardano.client.backend.api.DefaultUtxoSupplier
-import com.bloxbean.cardano.client.quicktx.ScriptTx
-import com.bloxbean.cardano.client.api.TransactionEvaluator
-import com.bloxbean.cardano.client.api.model.Result
 import scala.util.Random
-import adastream.BondContract.BondConfig
-import adastream.BondContract.BondAction
-import adastream.Encryption.blake2b224Hash
 
 extension (a: Array[Byte]) def toHex: String = Utils.bytesToHex(a)
 
@@ -911,7 +910,7 @@ object Bond:
     @main def main(cmd: String, others: String*) = {
         cmd match
             case "info" =>
-                // println(compiledBondScript.pretty.render(100))
+                println(compiledBondScript.pretty.render(100))
                 // println(bondProgram.doubleCborHex)
                 // println(compiledHtlcScript.pretty.render(100))
                 // println(htlcProgram.doubleCborHex)
