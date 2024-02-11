@@ -2,9 +2,9 @@
 //> using test.dep org.scalameta::munit::1.0.0-M10
 //> using test.dep org.scalameta::munit-scalacheck::1.0.0-M10
 //> using test.dep org.scalacheck::scalacheck::1.17.0
-//> using dep org.scalus:scalus_3:0.4.1+40-77c5e6d4-SNAPSHOT
+//> using dep org.scalus:scalus_3:0.5.0
 //> using dep org.bouncycastle:bcprov-jdk18on:1.77
-//> using dep com.bloxbean.cardano:cardano-client-lib:0.5.0
+//> using dep com.bloxbean.cardano:cardano-client-lib:0.5.1
 
 package adastream
 

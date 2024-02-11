@@ -1,35 +1,72 @@
 {
-  description = "A dev shell with scala-cli and Java 21";
-
   inputs = {
-    nixpkgs.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
+    # nixpkgs.follows = "haskellNix/nixpkgs";
+    # haskellNix.url = "github:input-output-hk/haskell.nix";
+    # iohk-nix.url = "github:input-output-hk/iohk-nix";
     flake-utils.url = "github:numtide/flake-utils";
+    # CHaP = {
+      # url = "github:input-output-hk/cardano-haskell-packages?ref=repo";
+      # flake = false;
+    # };
+    # cardano-node.url = "github:input-output-hk/cardano-node/1.35.7";
     plutus.url = "github:input-output-hk/plutus/e2cbee0d31da1b2dfa42cc76fb112dc69fa06798";
+    /* gitignore-nix = {
+      url = "github:hercules-ci/gitignore.nix";
+      inputs.nixpkgs.follows = "nixpkgs";
+    }; */
   };
 
-  outputs = { self, nixpkgs, flake-utils, plutus, ... }:
-    flake-utils.lib.eachDefaultSystem (system:
+  outputs =
+    { self
+    , flake-utils
+    , nixpkgs
+    # , cardano-node
+    , plutus
+    , ...
+    } @ inputs:
+    (flake-utils.lib.eachSystem [ "x86_64-darwin" "x86_64-linux" ]
+      (system:
       let
-        pkgs = nixpkgs.legacyPackages.${system};
-        patchedUplc = plutus.${system}.plutus.library.plutus-project.hsPkgs.plutus-core.components.exes.uplc.overrideAttrs (oldAttrs: {
-          patches = oldAttrs.patches or [] ++ [ ./uplc.patch ];
-          patchFlags = [ "-p2" ];
-        });
-
+        pkgs = import nixpkgs { inherit system; };
+        uplc = plutus.${system}.plutus.library.plutus-project.hsPkgs.plutus-core.components.exes.uplc;
+        # patchedUplc = uplc.overrideAttrs (oldAttrs: {
+          # patches = oldAttrs.patches or [] ++ [ ./uplc.patch ];
+          # patchFlags = [ "-p2" ];
+        # });
       in
-      {
+      rec {
         devShell = pkgs.mkShell {
-          nativeBuildInputs = [
-            pkgs.scala-cli
-            pkgs.jdk19
-            patchedUplc
+          JAVA_OPTS="-Xmx2g -XX:+UseG1GC";
+          # This fixes bash prompt/autocomplete issues with subshells (i.e. in VSCode) under `nix develop`/direnv
+          buildInputs = [ pkgs.bashInteractive ];
+          packages = with pkgs; [
+            git
+            openjdk11
+            sbt
+            scalafmt
+            niv
+            nixpkgs-fmt
+            # (builtins.trace (builtins.toJSON plutus) nodejs)
+            nodejs
+            # cardano-node.packages.${system}.cardano-node
+            # cardano-node.packages.${system}.cardano-cli
+            uplc
+            # patchedUplc
           ];
-          # Set any environment variables or shell hooks if needed
-          # Example:
-          # shellHook = ''
-          #   export JAVA_HOME=${pkgs.openjdk17}
-          # '';
+          shellHook = ''
+             ln -s ${plutus}/plutus-conformance plutus-conformance
+          '';
         };
-      }
+      })
     );
+
+  nixConfig = {
+    extra-substituters = [
+      "https://cache.iog.io"
+    ];
+    extra-trusted-public-keys = [
+      "hydra.iohk.io:f/Ea+s+dFdN+3Y/G+FDgSq+a5NEWhJGzdjvKNGv0/EQ="
+    ];
+    allow-import-from-derivation = true;
+  };
 }
