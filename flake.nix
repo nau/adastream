@@ -41,7 +41,7 @@
           buildInputs = [ pkgs.bashInteractive ];
           packages = with pkgs; [
             git
-            openjdk11
+            openjdk21
             sbt
             scalafmt
             niv
@@ -53,9 +53,6 @@
             uplc
             # patchedUplc
           ];
-          shellHook = ''
-             ln -s ${plutus}/plutus-conformance plutus-conformance
-          '';
         };
       })
     );
