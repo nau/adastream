@@ -1,11 +1,11 @@
 //> using scala 3.3.1
 //> using toolkit 0.2.1
-//> using plugin org.scalus:scalus-plugin_3:0.5.0
-//> using dep org.scalus:scalus_3:0.5.0
-//> using dep org.bouncycastle:bcprov-jdk18on:1.77
+//> using plugin org.scalus:scalus-plugin_3:0.6.0
+//> using dep org.scalus:scalus_3:0.6.0
+//> using dep org.bouncycastle:bcprov-jdk18on:1.78
 //> using dep net.i2p.crypto:eddsa:0.3.0
-//> using dep com.bloxbean.cardano:cardano-client-lib:0.5.0
-//> using dep com.bloxbean.cardano:cardano-client-backend-blockfrost:0.5.0
+//> using dep com.bloxbean.cardano:cardano-client-lib:0.5.1
+//> using dep com.bloxbean.cardano:cardano-client-backend-blockfrost:0.5.1
 
 package adastream
 
@@ -28,10 +28,10 @@ import com.bloxbean.cardano.client.crypto.cip1852.DerivationPath
 import com.bloxbean.cardano.client.crypto.config.CryptoConfiguration
 import com.bloxbean.cardano.client.function.helper.ScriptUtxoFinders
 import com.bloxbean.cardano.client.function.helper.SignerProviders
+import com.bloxbean.cardano.client.plutus.spec.*
 import com.bloxbean.cardano.client.plutus.spec.BigIntPlutusData
 import com.bloxbean.cardano.client.plutus.spec.PlutusData
 import com.bloxbean.cardano.client.plutus.spec.PlutusV2Script
-import com.bloxbean.cardano.client.plutus.spec.*
 import com.bloxbean.cardano.client.quicktx.QuickTxBuilder
 import com.bloxbean.cardano.client.quicktx.ScriptTx
 import com.bloxbean.cardano.client.quicktx.Tx
@@ -43,11 +43,11 @@ import org.bouncycastle.crypto.digests.SHA256Digest
 import org.bouncycastle.crypto.params.Ed25519PrivateKeyParameters
 import org.bouncycastle.crypto.params.Ed25519PublicKeyParameters
 import org.bouncycastle.crypto.signers.Ed25519Signer
+import scalus.*
 import scalus.Compile
 import scalus.Compiler.compile
 import scalus.Compiler.fieldAsData
-import scalus.*
-import scalus.builtin.Builtins
+import scalus.builtin.Builtins.*
 import scalus.builtin.ByteString
 import scalus.builtin.Data
 import scalus.builtin.Data.FromData
@@ -56,12 +56,14 @@ import scalus.builtin.Data.fromData
 import scalus.builtin.Data.toData
 import scalus.builtin.FromData
 import scalus.builtin.FromDataInstances.given
+import scalus.builtin.ToData
+import scalus.builtin.ToDataInstances.given
 import scalus.builtin.given
 import scalus.ledger.api.v1.Extended
 import scalus.ledger.api.v1.FromDataInstances.given
+import scalus.ledger.api.v2.*
 import scalus.ledger.api.v2.FromDataInstances.given
 import scalus.ledger.api.v2.ScriptPurpose.*
-import scalus.ledger.api.v2.*
 import scalus.prelude.AssocMap
 import scalus.prelude.List
 import scalus.prelude.Maybe.*
@@ -70,12 +72,10 @@ import scalus.prelude.Prelude.given
 import scalus.pretty
 import scalus.sir.SIR
 import scalus.sir.SimpleSirToUplcLowering
-import scalus.uplc.Cek
 import scalus.uplc.Program
 import scalus.uplc.ProgramFlatCodec
 import scalus.uplc.Term
-import scalus.uplc.ToData
-import scalus.uplc.ToDataInstances.given
+import scalus.uplc.eval.Cek
 import scalus.utils.Utils
 
 import java.io.FileInputStream
@@ -122,7 +122,7 @@ object BondContract {
     given ToData[BondAction] = (a: BondAction) =>
         a match
             case BondAction.Withdraw(preimage) =>
-                Builtins.mkConstr(0, Builtins.mkCons(preimage.toData, Builtins.mkNilData()))
+                mkConstr(0, mkCons(preimage.toData, mkNilData()))
             case BondAction.FraudProof(
                   signature,
                   preimage,
@@ -131,21 +131,21 @@ object BondContract {
                   chunkIndex,
                   merkleProof
                 ) =>
-                Builtins.mkConstr(
+                mkConstr(
                   1,
-                  Builtins.mkCons(
+                  mkCons(
                     signature.toData,
-                    Builtins.mkCons(
+                    mkCons(
                       preimage.toData,
-                      Builtins.mkCons(
+                      mkCons(
                         encryptedChunk.toData,
-                        Builtins.mkCons(
+                        mkCons(
                           chunkHash.toData,
-                          Builtins.mkCons(
+                          mkCons(
                             chunkIndex.toData,
-                            Builtins.mkCons(
+                            mkCons(
                               merkleProof.toData,
-                              Builtins.mkNilData()
+                              mkNilData()
                             )
                           )
                         )
@@ -157,7 +157,7 @@ object BondContract {
     def integerToByteString(num: BigInt): ByteString =
         def loop(div: BigInt, result: ByteString): ByteString = {
             val shifted = num / div
-            val newResult = Builtins.consByteString(shifted % 256, result)
+            val newResult = consByteString(shifted % 256, result)
             if shifted == BigInt(0) then newResult
             else loop(div * 256, newResult)
         }
@@ -173,15 +173,15 @@ object BondContract {
 
     // a and b are of the same length
     def xor(a: ByteString, b: ByteString) = {
-        val l1 = Builtins.lengthOfByteString(a)
-        val l2 = Builtins.lengthOfByteString(b)
+        val l1 = lengthOfByteString(a)
+        val l2 = lengthOfByteString(b)
         def xorHelper(a: ByteString, b: ByteString, i: BigInt, result: ByteString): ByteString = {
             if i < 0 then result
             else {
-                val byteA = Builtins.indexByteString(a, i)
-                val byteB = Builtins.indexByteString(b, i)
+                val byteA = indexByteString(a, i)
+                val byteB = indexByteString(b, i)
                 val xorByte = xorBytes(byteA, byteB)
-                xorHelper(a, b, i - 1, Builtins.consByteString(xorByte, result))
+                xorHelper(a, b, i - 1, consByteString(xorByte, result))
             }
         }
         if l1 == l2 then xorHelper(a, b, l1 - 1, ByteString.empty)
@@ -195,8 +195,8 @@ object BondContract {
         chunkIndex: BigInt,
         encId: ByteString
     ): Boolean =
-        val encryptedChunkAndChunkHashHash = Builtins.sha2_256(
-          Builtins.appendByteString(encryptedChunk, chunkHash)
+        val encryptedChunkAndChunkHashHash = sha2_256(
+          appendByteString(encryptedChunk, chunkHash)
         )
         def loop(index: BigInt, curHash: ByteString, siblings: List[ByteString]): ByteString =
             siblings match
@@ -204,17 +204,17 @@ object BondContract {
                 case Cons(sibling, rest) =>
                     val nextHash =
                         if index % 2 == BigInt(0)
-                        then Builtins.sha2_256(Builtins.appendByteString(curHash, sibling))
-                        else Builtins.sha2_256(Builtins.appendByteString(sibling, curHash))
+                        then sha2_256(appendByteString(curHash, sibling))
+                        else sha2_256(appendByteString(sibling, curHash))
                     loop(index / 2, nextHash, rest)
 
         val merkleRoot = loop(chunkIndex, encryptedChunkAndChunkHashHash, merkleProof)
-        Builtins.equalsByteString(merkleRoot, encId)
+        equalsByteString(merkleRoot, encId)
 
     def verifyPreimage(preimage: ByteString, preimageHash: ByteString): Boolean =
-        Builtins.equalsByteString(
+        equalsByteString(
           preimageHash,
-          Builtins.sha2_256(preimage)
+          sha2_256(preimage)
         )
 
     inline def verifyFraudProof(
@@ -230,35 +230,35 @@ object BondContract {
     ): Boolean =
         val verifyWrongChunkHash =
             // hash( Ei ⊕ hash( preimage || i) ) ≠ Hi
-            val expectedChunkHash = Builtins.sha2_256(
-              Builtins.trace("xor")(
+            val expectedChunkHash = sha2_256(
+              trace("xor")(
                 xor(
                   encryptedChunk,
-                  Builtins.trace("sha2_256")(
-                    Builtins.sha2_256(
-                      Builtins.appendByteString(
+                  trace("sha2_256")(
+                    sha2_256(
+                      appendByteString(
                         preimage,
-                        Builtins.trace("integerToByteString")(integerToByteString(chunkIndex))
+                        trace("integerToByteString")(integerToByteString(chunkIndex))
                       )
                     )
                   )
                 )
               )
             )
-            !Builtins.equalsByteString(expectedChunkHash, chunkHash)
-        Builtins.trace("verifyWrongChunkHash")(true)
+            !equalsByteString(expectedChunkHash, chunkHash)
+        trace("verifyWrongChunkHash")(true)
         val verifyValidClaimSignature = {
-            val claim = Builtins.appendByteString(encId, preimageHash)
-            Builtins.verifyEd25519Signature(
+            val claim = appendByteString(encId, preimageHash)
+            verifyEd25519Signature(
               serverPubKey,
               claim,
               signature
             )
         }
-        Builtins.trace("verifyValidClaimSignature")(true)
+        trace("verifyValidClaimSignature")(true)
 
         val verifyValidPreimage = verifyPreimage(preimage, preimageHash)
-        Builtins.trace("verifyValidPreimage")(true)
+        trace("verifyValidPreimage")(true)
 
         val merkleInclusionProofValid = verifyMerkleInclusionProof(
           merkleProof,
@@ -275,14 +275,14 @@ object BondContract {
     def bondContractValidator(datum: Data, redeemer: Data, ctxData: Data) = {
         fromData[BondConfig](datum) match
             case BondConfig(preimageHash, encId, serverPubKey, serverPkh) =>
-                val a = Builtins.trace("fromData[BondConfig]")(true)
+                val a = trace("fromData[BondConfig]")(true)
                 fromData[BondAction](redeemer) match
                     case BondAction.Withdraw(preimage) =>
-                        val a = Builtins.trace("BondAction.Withdraw(preimage)")(true)
+                        val a = trace("BondAction.Withdraw(preimage)")(true)
                         val signatories = fieldAsData[ScriptContext](_.txInfo.signatories)(ctxData)
                         val pkh =
-                            Builtins.unsafeDataAsB(Builtins.unsafeDataAsList(signatories).head)
-                        val verifySignature = Builtins.equalsByteString(pkh, serverPkh)
+                            unsafeDataAsB(unsafeDataAsList(signatories).head)
+                        val verifySignature = equalsByteString(pkh, serverPkh)
                         val verifyValidPreimage = verifyPreimage(preimage, preimageHash)
                         (verifySignature || (throw new Exception("S")))
                         && (verifyValidPreimage || (throw new Exception("P")))
@@ -294,7 +294,7 @@ object BondContract {
                           chunkIndex,
                           merkleProof
                         ) =>
-                        val a = Builtins.trace("BondAction.FraudProof")(true)
+                        val a = trace("BondAction.FraudProof")(true)
                         verifyFraudProof(
                           chunkHash,
                           chunkIndex,
@@ -317,9 +317,9 @@ object BondContract {
         hash: ByteString
     ) =
         (datum: Data, redeemer: Data, ctxData: Data) => {
-            val validPreimage = Builtins.equalsByteString(
+            val validPreimage = equalsByteString(
               hash,
-              Builtins.sha2_256(Builtins.unsafeDataAsB(redeemer))
+              sha2_256(unsafeDataAsB(redeemer))
             )
             val expired = {
                 val txInfoData = fieldAsData[ScriptContext](_.txInfo)(ctxData)
@@ -332,8 +332,8 @@ object BondContract {
                         val expired = expiration < txtime
                         val signedByClient = {
                             val signaturePubKeyHashData =
-                                Builtins.unsafeDataAsList(signatoriesData).head
-                            Builtins.equalsData(signaturePubKeyHashData, clientPubKeyHash)
+                                unsafeDataAsList(signatoriesData).head
+                            equalsData(signaturePubKeyHashData, clientPubKeyHash)
                         }
                         expired && signedByClient
                     case _ => false
@@ -564,7 +564,7 @@ object Bond:
         }
         val fileId = MerkleTree.fromHashes(hashes.result()).getMerkleRoot
         val encId = MerkleTree.fromHashes(encHashes.result()).getMerkleRoot
-        val claim = Builtins.appendByteString(encId, preimageHash)
+        val claim = appendByteString(encId, preimageHash)
         val signingProvider = CryptoConfiguration.INSTANCE.getSigningProvider()
         val mnemonic = System.getenv("MNEMONIC")
 
@@ -611,7 +611,7 @@ object Bond:
         val encId = merkleTreeFromIterator(chunks.iterator.drop(3)).getMerkleRoot
         System.err.println(s"fileId: ${fileId.toHex}")
         System.err.println(s"encId: ${encId.toHex}")
-        val claim = Builtins.appendByteString(encId, preimageHash)
+        val claim = appendByteString(encId, preimageHash)
         // Verify the signature
         val isVerified = {
             // Load the public key
@@ -678,7 +678,7 @@ object Bond:
         val encId = merkleTreeFromIterator(chunks.iterator.drop(3)).getMerkleRoot
         System.err.println(s"fileId: ${fileId.toHex}")
         System.err.println(s"encId: ${encId.toHex}")
-        val claim = Builtins.appendByteString(encId, paymentHash)
+        val claim = appendByteString(encId, paymentHash)
         // Verify the signature
         val isVerified = {
             // Load the public key
