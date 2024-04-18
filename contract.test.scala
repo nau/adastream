@@ -1,8 +1,8 @@
 //> using scala 3.3.3
 //> using test.dep org.scalameta::munit::1.0.0-M10
 //> using test.dep org.scalameta::munit-scalacheck::1.0.0-M10
-//> using test.dep org.scalacheck::scalacheck::1.17.0
-//> using dep org.scalus:scalus_3:0.6.0
+//> using test.dep org.scalacheck::scalacheck::1.18.0
+//> using dep org.scalus:scalus_3:0.6.1
 //> using dep org.bouncycastle:bcprov-jdk18on:1.78
 //> using dep com.bloxbean.cardano:cardano-client-lib:0.5.1
 
@@ -10,7 +10,6 @@ package adastream
 
 import adastream.BondContract.BondAction
 import adastream.BondContract.BondConfig
-import adastream.Encryption.blake2b224Hash
 import com.bloxbean.cardano.client.crypto.api.impl.EdDSASigningProvider
 import org.bouncycastle.crypto.digests.Blake2bDigest
 import org.bouncycastle.crypto.generators.Ed25519KeyPairGenerator
@@ -52,14 +51,15 @@ import scala.util.matching.Regex
 class ContractTests extends munit.ScalaCheckSuite {
     // generate ed25519 keys
     val RANDOM = new SecureRandom();
+    val ps = summon[PlatformSpecific]
     val keyPairGenerator = new Ed25519KeyPairGenerator();
     keyPairGenerator.init(new Ed25519KeyGenerationParameters(RANDOM));
     val asymmetricCipherKeyPair = keyPairGenerator.generateKeyPair();
     val privateKey =
         asymmetricCipherKeyPair.getPrivate().asInstanceOf[Ed25519PrivateKeyParameters];
-    val publicKey =
+    val publicKeyParams =
         asymmetricCipherKeyPair.getPublic().asInstanceOf[Ed25519PublicKeyParameters];
-
+    val publicKey = ByteString.fromArray(publicKeyParams.getEncoded())
     val preimage =
         ByteString.fromHex("a64cf172224cab7a1b1da28e14719a810b5de126141d066892dada6b6b6e7ccd")
     val preimageHash = ByteString.unsafeFromArray(Utils.sha2_256(preimage.bytes))
@@ -69,8 +69,8 @@ class ContractTests extends munit.ScalaCheckSuite {
     val bondConfig = BondConfig(
       preimageHash,
       encId,
-      ByteString.fromArray(publicKey.getEncoded()),
-      ByteString.fromArray(blake2b224Hash(publicKey.getEncoded()))
+      publicKey,
+      ps.blake2b_224(publicKey)
     )
 
     test(s"bondProgram size is ${Bond.bondProgram.doubleCborEncoded.size}") {
@@ -113,8 +113,7 @@ class ContractTests extends munit.ScalaCheckSuite {
     }
 
     test("Server can't withdraw with a wrong preimage") {
-        val withdraw =
-            BondAction.Withdraw(Builtins.appendByteString(preimage, ByteString.fromString("wrong")))
+        val withdraw = BondAction.Withdraw(preimage ++ ByteString.fromString("wrong"))
         evalBondValidator(
           bondConfig,
           withdraw,
@@ -163,12 +162,11 @@ class ContractTests extends munit.ScalaCheckSuite {
             val bondConfig = BondConfig(
               preimageHash,
               encId,
-              ByteString.fromArray(publicKey.getEncoded()),
-              ByteString.fromArray(blake2b224Hash(publicKey.getEncoded()))
+              publicKey,
+              ps.blake2b_224(publicKey)
             )
-            val claim = Builtins.appendByteString(bondConfig.encId, bondConfig.preimageHash)
-            val signature =
-                Encryption.signMessage(claim, privateKey)
+            val claim = bondConfig.encId ++ bondConfig.preimageHash
+            val signature = Encryption.signMessage(claim, privateKey)
             val merkleProof = scalus.prelude.List(merkleTree.makeMerkleProof(wrongChunkIndex): _*)
             val action =
                 BondAction.FraudProof(
@@ -221,7 +219,7 @@ class ContractTests extends munit.ScalaCheckSuite {
                 // println(logs)
                 // println(s"budget: $budget, scalus budget: $r")
                 // if budget != r then
-                    // println(s"diff: ${budget.cpu - r.cpu}, ${budget.memory - r.memory}")
+                // println(s"diff: ${budget.cpu - r.cpu}, ${budget.memory - r.memory}")
                 /* println(
                   s"Execution stats:\n${tallyingBudgetSpender.costs.toArray
                           .sortBy(_._1.toString())
