@@ -120,7 +120,7 @@ object BondContract {
     given ToData[BondAction] = (a: BondAction) =>
         a match
             case BondAction.Withdraw(preimage) =>
-                mkConstr(0, mkCons(preimage.toData, mkNilData()))
+                constrData(0, preimage.toData :: mkNilData())
             case BondAction.FraudProof(
                   signature,
                   preimage,
@@ -129,27 +129,15 @@ object BondContract {
                   chunkIndex,
                   merkleProof
                 ) =>
-                mkConstr(
+                constrData(
                   1,
-                  mkCons(
-                    signature.toData,
-                    mkCons(
-                      preimage.toData,
-                      mkCons(
-                        encryptedChunk.toData,
-                        mkCons(
-                          chunkHash.toData,
-                          mkCons(
-                            chunkIndex.toData,
-                            mkCons(
-                              merkleProof.toData,
-                              mkNilData()
-                            )
-                          )
-                        )
-                      )
-                    )
-                  )
+                  signature.toData
+                      :: preimage.toData
+                      :: encryptedChunk.toData
+                      :: chunkHash.toData
+                      :: chunkIndex.toData
+                      :: merkleProof.toData
+                      :: mkNilData()
                 )
 
     def integerToByteString(num: BigInt): ByteString =

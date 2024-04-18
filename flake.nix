@@ -43,6 +43,7 @@
             git
             openjdk21
             sbt
+            mill
             scalafmt
             niv
             nixpkgs-fmt
