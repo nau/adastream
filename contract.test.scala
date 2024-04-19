@@ -1,10 +1,6 @@
-//> using scala 3.3.3
 //> using test.dep org.scalameta::munit::1.0.0-M10
 //> using test.dep org.scalameta::munit-scalacheck::1.0.0-M10
 //> using test.dep org.scalacheck::scalacheck::1.18.0
-//> using dep org.scalus:scalus_3:0.6.1
-//> using dep org.bouncycastle:bcprov-jdk18on:1.78.1
-//> using dep com.bloxbean.cardano:cardano-client-lib:0.5.1
 
 package adastream
 
