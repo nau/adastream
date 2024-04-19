@@ -3,7 +3,7 @@
 //> using test.dep org.scalameta::munit-scalacheck::1.0.0-M10
 //> using test.dep org.scalacheck::scalacheck::1.18.0
 //> using dep org.scalus:scalus_3:0.6.1
-//> using dep org.bouncycastle:bcprov-jdk18on:1.78
+//> using dep org.bouncycastle:bcprov-jdk18on:1.78.1
 //> using dep com.bloxbean.cardano:cardano-client-lib:0.5.1
 
 package adastream
@@ -74,7 +74,7 @@ class ContractTests extends munit.ScalaCheckSuite {
     )
 
     test(s"bondProgram size is ${Bond.bondProgram.doubleCborEncoded.size}") {
-        assert(Bond.bondProgram.doubleCborEncoded.size == 1140)
+        assert(Bond.bondProgram.doubleCborEncoded.size == 1111)
     }
 
     test("Server can withdraw with valid preimage and signature") {
@@ -167,7 +167,7 @@ class ContractTests extends munit.ScalaCheckSuite {
             )
             val claim = bondConfig.encId ++ bondConfig.preimageHash
             val signature = Encryption.signMessage(claim, privateKey)
-            val merkleProof = scalus.prelude.List(merkleTree.makeMerkleProof(wrongChunkIndex): _*)
+            val merkleProof = scalus.builtin.Data.List(merkleTree.makeMerkleProof(wrongChunkIndex).map(_.toData).toList)
             val action =
                 BondAction.FraudProof(
                   signature = signature,

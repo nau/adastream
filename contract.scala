@@ -2,7 +2,7 @@
 //> using toolkit 0.2.1
 //> using plugin org.scalus:scalus-plugin_3:0.6.1
 //> using dep org.scalus:scalus_3:0.6.1
-//> using dep org.bouncycastle:bcprov-jdk18on:1.78
+//> using dep org.bouncycastle:bcprov-jdk18on:1.78.1
 //> using dep net.i2p.crypto:eddsa:0.3.0
 //> using dep com.bloxbean.cardano:cardano-client-lib:0.5.1
 //> using dep com.bloxbean.cardano:cardano-client-backend-blockfrost:0.5.1
@@ -53,8 +53,8 @@ import scalus.builtin.Data.FromData
 import scalus.builtin.Data.ToData
 import scalus.builtin.Data.fromData
 import scalus.builtin.Data.toData
+import scalus.builtin.List
 import scalus.builtin.FromData
-import scalus.builtin.FromDataInstances.given
 import scalus.builtin.ToData
 import scalus.builtin.ToDataInstances.given
 import scalus.builtin.given
@@ -64,7 +64,6 @@ import scalus.ledger.api.v2.*
 import scalus.ledger.api.v2.FromDataInstances.given
 import scalus.ledger.api.v2.ScriptPurpose.*
 import scalus.prelude.AssocMap
-import scalus.prelude.List
 import scalus.prelude.Maybe.*
 import scalus.pretty
 import scalus.sir.SIR
@@ -90,8 +89,6 @@ extension (a: Array[Byte]) def toHex: String = Utils.bytesToHex(a)
 
 @Compile
 object BondContract {
-    import List.*
-
     case class BondConfig(
         preimageHash: ByteString,
         encId: ByteString,
@@ -107,9 +104,10 @@ object BondContract {
             encryptedChunk: ByteString,
             chunkHash: ByteString,
             chunkIndex: BigInt,
-            merkleProof: List[ByteString]
+            merkleProof: Data // List of ByteString
         )
 
+    import scalus.builtin.FromDataInstances.given
     given FromData[BondConfig] = FromData.deriveCaseClass
     given ToData[BondConfig] = ToData.deriveCaseClass[BondConfig](0)
 
@@ -136,7 +134,7 @@ object BondContract {
                       :: encryptedChunk.toData
                       :: chunkHash.toData
                       :: chunkIndex.toData
-                      :: merkleProof.toData
+                      :: merkleProof
                       :: mkNilData()
                 )
 
@@ -175,7 +173,7 @@ object BondContract {
     }
 
     inline def verifyMerkleInclusionProof(
-        merkleProof: List[ByteString],
+        merkleProof: Data,
         encryptedChunk: ByteString,
         chunkHash: ByteString,
         chunkIndex: BigInt,
@@ -184,17 +182,17 @@ object BondContract {
         val encryptedChunkAndChunkHashHash = sha2_256(
           appendByteString(encryptedChunk, chunkHash)
         )
-        def loop(index: BigInt, curHash: ByteString, siblings: List[ByteString]): ByteString =
-            siblings match
-                case Nil => curHash
-                case Cons(sibling, rest) =>
-                    val nextHash =
-                        if index % 2 == BigInt(0)
-                        then sha2_256(appendByteString(curHash, sibling))
-                        else sha2_256(appendByteString(sibling, curHash))
-                    loop(index / 2, nextHash, rest)
+        def loop(index: BigInt, curHash: ByteString, siblings: List[Data]): ByteString =
+            if siblings.isEmpty then curHash
+            else
+                val sibling = unBData(siblings.head)
+                val nextHash =
+                    if index % 2 == BigInt(0)
+                    then sha2_256(appendByteString(curHash, sibling))
+                    else sha2_256(appendByteString(sibling, curHash))
+                loop(index / 2, nextHash, siblings.tail)
 
-        val merkleRoot = loop(chunkIndex, encryptedChunkAndChunkHashHash, merkleProof)
+        val merkleRoot = loop(chunkIndex, encryptedChunkAndChunkHashHash, unListData(merkleProof))
         merkleRoot == encId
 
     def verifyPreimage(preimage: ByteString, preimageHash: ByteString): Boolean =
@@ -205,7 +203,7 @@ object BondContract {
         chunkIndex: BigInt,
         encId: ByteString,
         encryptedChunk: ByteString,
-        merkleProof: prelude.List[ByteString],
+        merkleProof: Data,
         preimage: ByteString,
         preimageHash: ByteString,
         serverPubKey: ByteString,
@@ -328,7 +326,7 @@ class MerkleTree(private val levels: ArrayBuffer[ArrayBuffer[ByteString]]) {
         levels.last.head
     }
 
-    def makeMerkleProof(index: Int): ArraySeq[ByteString] = {
+    def makeMerkleProof(index: Int): Seq[ByteString] = {
         val proofSize = levels.length - 1
         val hashesCount = levels.head.length
         assert(index < hashesCount)
@@ -373,7 +371,9 @@ object MerkleTree {
         else MerkleTree(buildLevels(ArrayBuffer.from(hashes), ArrayBuffer.empty))
     }
 
-    def calculateMerkleTreeLevel(hashes: ArrayBuffer[ByteString]): ArrayBuffer[ByteString] = {
+    private def calculateMerkleTreeLevel(
+        hashes: ArrayBuffer[ByteString]
+    ): ArrayBuffer[ByteString] = {
         var levelHashes = ArrayBuffer.empty[ByteString]
         // Duplicate the last element if the number of elements is odd
         if hashes.length % 2 == 1
@@ -388,14 +388,14 @@ object MerkleTree {
     def calculateMerkleRootFromProof(
         index: Int,
         hash: ByteString,
-        proof: ArraySeq[ByteString]
+        proof: Seq[ByteString]
     ): ByteString = {
 
         var idx = index
         val hasher = new SHA256Digest()
         var currentHash = hash
 
-        proof.foreach { sibling =>
+        for sibling <- proof do
             val combinedHash =
                 if idx % 2 == 0 then currentHash ++ sibling
                 else sibling ++ currentHash
@@ -404,7 +404,6 @@ object MerkleTree {
             hasher.doFinal(hash, 0)
             currentHash = ByteString.unsafeFromArray(hash)
             idx /= 2
-        }
 
         currentHash
     }
@@ -790,7 +789,7 @@ object Bond:
           encryptedChunk = encryptedChunk,
           chunkHash = chunkHash,
           chunkIndex = chunkIndex,
-          merkleProof = scalus.prelude.List(merkleProof: _*)
+          merkleProof = Data.List(merkleProof.map(bData).toList)
         )
         spendBond(sender, bondConfig, fraudProof)
     }
