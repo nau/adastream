@@ -1,80 +1,15 @@
 package adastream
 
-import adastream.BondContract.BondAction
-import adastream.BondContract.BondConfig
-import adastream.Encryption.chunksFromInputStream
-import adastream.Encryption.signMessage
-import com.bloxbean.cardano.client.account.Account
-import com.bloxbean.cardano.client.address.AddressProvider
-import com.bloxbean.cardano.client.api.TransactionEvaluator
-import com.bloxbean.cardano.client.api.model.Amount
-import com.bloxbean.cardano.client.api.model.Result
-import com.bloxbean.cardano.client.backend.api.DefaultUtxoSupplier
-import com.bloxbean.cardano.client.backend.blockfrost.common.Constants
-import com.bloxbean.cardano.client.backend.blockfrost.service.BFBackendService
-import com.bloxbean.cardano.client.common.model.Networks
-import com.bloxbean.cardano.client.crypto.cip1852.CIP1852
-import com.bloxbean.cardano.client.crypto.cip1852.DerivationPath
-import com.bloxbean.cardano.client.crypto.config.CryptoConfiguration
-import com.bloxbean.cardano.client.function.helper.ScriptUtxoFinders
-import com.bloxbean.cardano.client.function.helper.SignerProviders
-import com.bloxbean.cardano.client.plutus.spec.*
-import com.bloxbean.cardano.client.plutus.spec.BigIntPlutusData
-import com.bloxbean.cardano.client.plutus.spec.PlutusData
-import com.bloxbean.cardano.client.plutus.spec.PlutusV2Script
-import com.bloxbean.cardano.client.quicktx.QuickTxBuilder
-import com.bloxbean.cardano.client.quicktx.ScriptTx
-import com.bloxbean.cardano.client.quicktx.Tx
-import dotty.tools.dotc.util.Util
-import io.bullet.borer.Cbor
-import net.i2p.crypto.eddsa.EdDSAEngine
-import org.bouncycastle.crypto.digests.Blake2bDigest
-import org.bouncycastle.crypto.digests.SHA256Digest
-import org.bouncycastle.crypto.params.Ed25519PrivateKeyParameters
-import org.bouncycastle.crypto.params.Ed25519PublicKeyParameters
-import org.bouncycastle.crypto.signers.Ed25519Signer
 import scalus.*
-import scalus.Compile
-import scalus.Compiler.compile
 import scalus.Compiler.fieldAsData
 import scalus.builtin.Builtins.*
-import scalus.builtin.ByteString
-import scalus.builtin.Data
-import scalus.builtin.Data.FromData
-import scalus.builtin.Data.ToData
-import scalus.builtin.Data.fromData
-import scalus.builtin.Data.toData
-import scalus.builtin.List
-import scalus.builtin.FromData
-import scalus.builtin.ToData
+import scalus.builtin.Data.{FromData, ToData, fromData, toData}
 import scalus.builtin.ToDataInstances.given
-import scalus.builtin.given
+import scalus.builtin.{ByteString, Data, FromData, List, ToData, given}
 import scalus.ledger.api.v1.Extended
 import scalus.ledger.api.v1.FromDataInstances.given
 import scalus.ledger.api.v2.*
-import scalus.ledger.api.v2.FromDataInstances.given
-import scalus.ledger.api.v2.ScriptPurpose.*
-import scalus.prelude.AssocMap
-import scalus.prelude.Maybe.*
-import scalus.pretty
-import scalus.sir.SIR
-import scalus.sir.SimpleSirToUplcLowering
-import scalus.uplc.Program
-import scalus.uplc.ProgramFlatCodec
-import scalus.uplc.Term
-import scalus.uplc.eval.Cek
 import scalus.utils.Utils
-
-import java.io.FileInputStream
-import java.io.FileOutputStream
-import java.io.InputStream
-import java.nio.ByteBuffer
-import java.nio.file.Path
-import java.util.Arrays
-import scala.annotation.tailrec
-import scala.collection.mutable.ArrayBuffer
-import scala.util.Random
-import scalus.builtin.PlatformSpecific
 
 extension (a: Array[Byte]) def toHex: String = Utils.bytesToHex(a)
 
@@ -147,7 +82,7 @@ object BondContract {
     }
 
     // a and b are of the same length
-    def xor(a: ByteString, b: ByteString) = {
+    def xor(a: ByteString, b: ByteString): ByteString = {
         val l1 = lengthOfByteString(a)
         val l2 = lengthOfByteString(b)
         def xorHelper(a: ByteString, b: ByteString, i: BigInt, result: ByteString): ByteString = {
@@ -244,7 +179,7 @@ object BondContract {
         && (verifyValidPreimage || (throw new Exception("P")))
         && (merkleInclusionProofValid || (throw new Exception("M")))
 
-    def bondContractValidator(datum: Data, redeemer: Data, ctxData: Data) = {
+    def bondContractValidator(datum: Data, redeemer: Data, ctxData: Data): Boolean = {
         fromData[BondConfig](datum) match
             case BondConfig(preimageHash, encId, serverPubKey, serverPkh) =>
                 val a = trace("fromData[BondConfig]")(true)
@@ -287,25 +222,24 @@ object BondContract {
         clientPubKeyHash: Data,
         expiration: POSIXTime,
         hash: ByteString
-    ) =
-        (datum: Data, redeemer: Data, ctxData: Data) => {
-            val validPreimage = hash == sha2_256(unBData(redeemer))
-            val expired = {
-                val txInfoData = fieldAsData[ScriptContext](_.txInfo)(ctxData)
-                val signatoriesData = fieldAsData[TxInfo](_.signatories)(txInfoData)
-                val txtime = fromData[POSIXTimeRange](
-                  fieldAsData[TxInfo](_.validRange)(txInfoData)
-                )
-                txtime.from.extended match
-                    case Extended.Finite(txtime) =>
-                        val expired = expiration < txtime
-                        val signedByClient = {
-                            val signaturePubKeyHashData = unListData(signatoriesData).head
-                            signaturePubKeyHashData == clientPubKeyHash
-                        }
-                        expired && signedByClient
-                    case _ => false
-            }
-            if validPreimage || expired then () else throw new Exception()
+    )(datum: Data, redeemer: Data, ctxData: Data): Unit = {
+        val validPreimage = hash == sha2_256(unBData(redeemer))
+        val expired = {
+            val txInfoData = fieldAsData[ScriptContext](_.txInfo)(ctxData)
+            val signatoriesData = fieldAsData[TxInfo](_.signatories)(txInfoData)
+            val txtime = fromData[POSIXTimeRange](
+              fieldAsData[TxInfo](_.validRange)(txInfoData)
+            )
+            txtime.from.extended match
+                case Extended.Finite(txtime) =>
+                    val expired = expiration < txtime
+                    val signedByClient = {
+                        val signaturePubKeyHashData = unListData(signatoriesData).head
+                        signaturePubKeyHashData == clientPubKeyHash
+                    }
+                    expired && signedByClient
+                case _ => false
         }
+        if validPreimage || expired then () else throw new Exception()
+    }
 }

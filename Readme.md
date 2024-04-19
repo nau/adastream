@@ -2,7 +2,7 @@
 
 ## Introduction
 
-This project is a Cardano implementation of Robin Linus'es [BitStream](https://github.com/RobinLinus/BitStream) protocol.
+This project is a Cardano implementation of the [BitStream](https://github.com/RobinLinus/BitStream) protocol by Robin Linus.
 
 Original paper: [BitStream: Decentralized File Hosting Incentivised via Bitcoin Payments
 ](https://robinlinus.com/bitstream.pdf)
@@ -33,6 +33,7 @@ I use Scala and [Scalus](https://github.com/nau/scalus) to compile a bond and HT
 
 - Java
 - [scala-cli](https://scala-cli.virtuslab.org/install)
+- Cardano uplc command line tool is needed for testing
 
 If you use Nix, you can run `nix develop` to get a shell with all the dependencies.
 
@@ -50,51 +51,51 @@ If you don't have BlockFrost API key it still can work, but you will not be able
 ### Get the keys
 
 ```bash
-  scala-cli contract.scala -- keys
+  scala-cli . -- keys
 ```
 
 ### Encrypt a file
 
 ```bash
   export preimage=$(head -c 32 /dev/urandom | xxd -p -c 64)
-  cat bitcoin.pdf | scala-cli contract.scala -- encrypt $preimage  > bitcoin.pdf.encrypted
+  cat bitcoin.pdf | scala-cli . -- encrypt $preimage  > bitcoin.pdf.encrypted
 ```
 
 If you want to test the fraud proof, you can produce a wrongly encrypted file.
 
 ```bash
   export preimage=$(head -c 32 /dev/urandom | xxd -p -c 64)
-  cat bitcoin.pdf | scala-cli contract.scala -- encrypt-wrong $preimage  > bitcoin.pdf.encrypted-wrong
+  cat bitcoin.pdf | scala-cli . -- encrypt-wrong $preimage  > bitcoin.pdf.encrypted-wrong
 ```
 
 ### Verify a file
 
 ```bash
-  cat bitcoin.pdf.encrypted | scala-cli contract.scala -- verify $pubKeyHex
+  cat bitcoin.pdf.encrypted | scala-cli . -- verify $pubKeyHex
 ```
 
 ### Create a bond contract transaction on Cardano Preview network
 
 ```bash
-  cat bitcoin.pdf.encrypted | scala-cli contract.scala -- bond
+  cat bitcoin.pdf.encrypted | scala-cli . -- bond
 ```
 
 ### Create a bond withdraw transaction on Cardano Preview network
 
 ```bash
-  cat bitcoin.pdf.encrypted | scala-cli contract.scala -- withdraw $preimage $encId
+  cat bitcoin.pdf.encrypted | scala-cli . -- withdraw $preimage $encId
 ```
 
 ### Decrypt a file
 
 ```bash
-  cat bitcoin.pdf.encrypted | scala-cli contract.scala -- decrypt $preimage $pubKeyHex > bitcoin.decrypted.pdf
+  cat bitcoin.pdf.encrypted | scala-cli . -- decrypt $preimage $pubKeyHex > bitcoin.decrypted.pdf
 ```
 
 ### Create a fraud proof transaction on Cardano Preview network
 
 ```bash
-  cat bitcoin.pdf.encrypted-wrong | scala-cli contract.scala -- spend-bond $preimage $pubKeyHex > /dev/null
+  cat bitcoin.pdf.encrypted-wrong | scala-cli . -- spend-bond $preimage $pubKeyHex > /dev/null
 ```
 
 ## On-Chain example

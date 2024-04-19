@@ -1,77 +1,33 @@
 package adastream
 
-import adastream.BondContract.BondAction
-import adastream.BondContract.BondConfig
+import adastream.BondContract.{BondAction, BondConfig}
 import adastream.Encryption.chunksFromInputStream
-import adastream.Encryption.signMessage
 import com.bloxbean.cardano.client.account.Account
 import com.bloxbean.cardano.client.address.AddressProvider
-import com.bloxbean.cardano.client.api.TransactionEvaluator
 import com.bloxbean.cardano.client.api.model.Amount
-import com.bloxbean.cardano.client.api.model.Result
 import com.bloxbean.cardano.client.backend.api.DefaultUtxoSupplier
 import com.bloxbean.cardano.client.backend.blockfrost.common.Constants
 import com.bloxbean.cardano.client.backend.blockfrost.service.BFBackendService
 import com.bloxbean.cardano.client.common.model.Networks
-import com.bloxbean.cardano.client.crypto.cip1852.CIP1852
-import com.bloxbean.cardano.client.crypto.cip1852.DerivationPath
+import com.bloxbean.cardano.client.crypto.cip1852.{CIP1852, DerivationPath}
 import com.bloxbean.cardano.client.crypto.config.CryptoConfiguration
-import com.bloxbean.cardano.client.function.helper.ScriptUtxoFinders
-import com.bloxbean.cardano.client.function.helper.SignerProviders
+import com.bloxbean.cardano.client.function.helper.{ScriptUtxoFinders, SignerProviders}
 import com.bloxbean.cardano.client.plutus.spec.*
-import com.bloxbean.cardano.client.plutus.spec.BigIntPlutusData
-import com.bloxbean.cardano.client.plutus.spec.PlutusData
-import com.bloxbean.cardano.client.plutus.spec.PlutusV2Script
-import com.bloxbean.cardano.client.quicktx.QuickTxBuilder
-import com.bloxbean.cardano.client.quicktx.ScriptTx
-import com.bloxbean.cardano.client.quicktx.Tx
-import dotty.tools.dotc.util.Util
-import io.bullet.borer.Cbor
-import net.i2p.crypto.eddsa.EdDSAEngine
-import org.bouncycastle.crypto.digests.Blake2bDigest
+import com.bloxbean.cardano.client.quicktx.{QuickTxBuilder, ScriptTx, Tx}
 import org.bouncycastle.crypto.digests.SHA256Digest
 import org.bouncycastle.crypto.params.Ed25519PrivateKeyParameters
-import org.bouncycastle.crypto.params.Ed25519PublicKeyParameters
 import org.bouncycastle.crypto.signers.Ed25519Signer
 import scalus.*
-import scalus.Compile
 import scalus.Compiler.compile
-import scalus.Compiler.fieldAsData
 import scalus.builtin.Builtins.*
-import scalus.builtin.ByteString
-import scalus.builtin.Data
-import scalus.builtin.Data.FromData
-import scalus.builtin.Data.ToData
-import scalus.builtin.Data.fromData
-import scalus.builtin.Data.toData
-import scalus.builtin.FromData
-import scalus.builtin.List
-import scalus.builtin.PlatformSpecific
-import scalus.builtin.ToData
-import scalus.builtin.ToDataInstances.given
-import scalus.builtin.given
-import scalus.ledger.api.v1.Extended
-import scalus.ledger.api.v1.FromDataInstances.given
+import scalus.builtin.Data.{ToData, toData}
+import scalus.builtin.{ByteString, Data, PlatformSpecific, given}
 import scalus.ledger.api.v2.*
-import scalus.ledger.api.v2.FromDataInstances.given
-import scalus.ledger.api.v2.ScriptPurpose.*
-import scalus.prelude.AssocMap
-import scalus.prelude.Maybe.*
-import scalus.pretty
-import scalus.sir.SIR
-import scalus.sir.SimpleSirToUplcLowering
-import scalus.uplc.Program
-import scalus.uplc.ProgramFlatCodec
-import scalus.uplc.Term
-import scalus.uplc.eval.Cek
+import scalus.uplc.{Program, Term}
 import scalus.utils.Utils
 
-import java.io.FileInputStream
-import java.io.FileOutputStream
 import java.io.InputStream
-import java.nio.ByteBuffer
 import java.nio.file.Path
-import java.util.Arrays
 import scala.annotation.tailrec
 import scala.collection.immutable.ArraySeq
 import scala.collection.mutable.ArrayBuffer
@@ -88,18 +44,17 @@ class MerkleTree(private val levels: ArrayBuffer[ArrayBuffer[ByteString]]) {
         assert(index < hashesCount)
         if proofSize == 0 then return ArraySeq.empty
 
-        var proof = ArraySeq.newBuilder[ByteString]
-        for (level <- 0 until proofSize) {
+        val proof = ArraySeq.newBuilder[ByteString]
+        for level <- 0 until proofSize do
             val levelHashes = levels(level)
             val idx = index / (1 << level)
             val proofHashIdx = if idx % 2 == 0 then idx + 1 else idx - 1
             proof += levelHashes(proofHashIdx)
-        }
 
         proof.result()
     }
 
-    override def toString(): String =
+    override def toString: String =
         levels.map(_.map(_.toHex.take(8)).mkString(",")).mkString("\n")
 }
 
@@ -130,7 +85,7 @@ object MerkleTree {
     private def calculateMerkleTreeLevel(
         hashes: ArrayBuffer[ByteString]
     ): ArrayBuffer[ByteString] = {
-        var levelHashes = ArrayBuffer.empty[ByteString]
+        val levelHashes = ArrayBuffer.empty[ByteString]
         // Duplicate the last element if the number of elements is odd
         if hashes.length % 2 == 1
         then hashes.addOne(hashes.last)
@@ -146,7 +101,6 @@ object MerkleTree {
         hash: ByteString,
         proof: Seq[ByteString]
     ): ByteString = {
-
         var idx = index
         val hasher = new SHA256Digest()
         var currentHash = hash
@@ -155,15 +109,10 @@ object MerkleTree {
             val combinedHash =
                 if idx % 2 == 0 then currentHash ++ sibling
                 else sibling ++ currentHash
-            hasher.update(combinedHash.bytes, 0, combinedHash.length)
-            val hash = new Array[Byte](hasher.getDigestSize)
-            hasher.doFinal(hash, 0)
-            currentHash = ByteString.unsafeFromArray(hash)
+            currentHash = sha2_256(combinedHash)
             idx /= 2
-
         currentHash
     }
-
 }
 
 object Encryption {
@@ -188,7 +137,7 @@ object Encryption {
         encryptChunk(chunk, secret, index)
     }
 
-    def readChunk32(inputStream: InputStream): Array[Byte] = {
+    private def readChunk32(inputStream: InputStream): Array[Byte] = {
         val buffer = new Array[Byte](32)
         val bytesRead = inputStream.read(buffer)
         if bytesRead == -1 then null
@@ -200,14 +149,13 @@ object Encryption {
     }
 
     def calculateFileIdAndEncId(inputFile: Path, secret: Array[Byte]): (ByteString, ByteString) = {
-        import java.io.{File, FileInputStream}
+        import java.io.FileInputStream
 
-        val inputStream = new FileInputStream(inputFile.toFile())
-
+        val inputStream = new FileInputStream(inputFile.toFile)
         val hashes = ArraySeq.newBuilder[ByteString]
         val encHashes = ArraySeq.newBuilder[ByteString]
         var index = 0
-        while (inputStream.available() > 0) {
+        while inputStream.available() > 0 do
             val chunk = readChunk32(inputStream)
             val encrypted = encryptChunk(chunk, secret, index)
             val hash = Utils.sha2_256(chunk)
@@ -215,7 +163,6 @@ object Encryption {
             hashes += ByteString.unsafeFromArray(hash)
             encHashes += ByteString.unsafeFromArray(encHash)
             index += 1
-        }
         val fileId = MerkleTree.fromHashes(hashes.result()).getMerkleRoot
         val encId = MerkleTree.fromHashes(encHashes.result()).getMerkleRoot
         (fileId, encId)
@@ -223,7 +170,7 @@ object Encryption {
 
     def chunksFromInputStream(inputStream: InputStream): Iterator[Array[Byte]] = {
         new Iterator[Array[Byte]] {
-            var nextChunk = readChunk32(inputStream)
+            var nextChunk: Array[Byte] = readChunk32(inputStream)
             override def hasNext: Boolean = nextChunk != null
             override def next(): Array[Byte] = {
                 val chunk = nextChunk
@@ -241,16 +188,16 @@ object Encryption {
 }
 
 object Bond:
-    val ps = summon[PlatformSpecific]
-    val compiledBondScript = compile(BondContract.bondContractValidator)
-    val bondValidator = compiledBondScript.toUplc(generateErrorTraces = true)
-    val bondProgram = Program((1, 0, 0), bondValidator)
-    val compiledHtlcScript = compile(BondContract.makeHtlcContractValidator)
-    val xorBytesScript = compile(BondContract.xorBytes).toUplc(generateErrorTraces = true)
-    val htlcValidator = compiledHtlcScript.toUplc(generateErrorTraces = true)
-    val htlcProgram = Program((1, 0, 0), htlcValidator)
+    private val ps: PlatformSpecific = summon[PlatformSpecific]
+    private val compiledBondScript = compile(BondContract.bondContractValidator)
+    val bondValidator: Term = compiledBondScript.toUplc(generateErrorTraces = true)
+    val bondProgram: Program = Program((1, 0, 0), bondValidator)
+    private val compiledHtlcScript = compile(BondContract.makeHtlcContractValidator)
+    val xorBytesScript: Term = compile(BondContract.xorBytes).toUplc(generateErrorTraces = true)
+    private val htlcValidator = compiledHtlcScript.toUplc(generateErrorTraces = true)
+    private val htlcProgram = Program((1, 0, 0), htlcValidator)
 
-    def publish() = {
+    private def publish(): Unit = {
         val is = System.in
         val hashes = Encryption
             .chunksFromInputStream(System.in)
@@ -259,7 +206,7 @@ object Bond:
         println(s"fileId: ${merkleTree.getMerkleRoot.toHex}")
     }
 
-    def encrypt(secret: String, encryptIncorrectly: Boolean) = {
+    private def encrypt(secret: String, encryptIncorrectly: Boolean): Unit = {
         val preimage = Utils.hexToBytes(secret)
         val preimageHash = ByteString.unsafeFromArray(Utils.sha2_256(preimage))
         val encryptedChunks = ArraySeq.newBuilder[Array[Byte]]
@@ -268,7 +215,7 @@ object Bond:
         val chunks = chunksFromInputStream(System.in).toArray
         val randomWrongChunkIndex = Random.nextInt(chunks.length)
         System.err.println(s"randomWrongChunkIndex: $randomWrongChunkIndex")
-        chunks.zipWithIndex.foreach { case (chunk, index) =>
+        for (chunk, index) <- chunks.zipWithIndex do
             val encrypted =
                 val encrypted = Encryption.encryptChunk(chunk, preimage, index)
                 if encryptIncorrectly && randomWrongChunkIndex == index
@@ -279,11 +226,11 @@ object Bond:
             encryptedChunks += encrypted
             hashes += ByteString.unsafeFromArray(hash)
             encHashes += ByteString.unsafeFromArray(encHash)
-        }
+
         val fileId = MerkleTree.fromHashes(hashes.result()).getMerkleRoot
         val encId = MerkleTree.fromHashes(encHashes.result()).getMerkleRoot
         val claim = encId ++ preimageHash
-        val signingProvider = CryptoConfiguration.INSTANCE.getSigningProvider()
+        val signingProvider = CryptoConfiguration.INSTANCE.getSigningProvider
         val mnemonic = System.getenv("MNEMONIC")
 
         val hdKeyPair = new CIP1852().getKeyPairFromMnemonic(
@@ -291,7 +238,7 @@ object Bond:
           DerivationPath.createExternalAddressDerivationPath(0)
         );
         val signature =
-            signingProvider.signExtended(claim.bytes, hdKeyPair.getPrivateKey().getKeyData())
+            signingProvider.signExtended(claim.bytes, hdKeyPair.getPrivateKey.getKeyData)
         val fileOut = System.out
         fileOut.write(signature)
         fileOut.write(preimageHash.bytes)
@@ -300,17 +247,21 @@ object Bond:
             fileOut.write(hash.bytes)
         System.err.println(s"preimage: ${Utils.bytesToHex(preimage)}")
         System.err.println(s"preimageHash: ${preimageHash.toHex}")
-        System.err.println(s"pubKey: ${hdKeyPair.getPublicKey().getKeyData().toHex}")
+        System.err.println(s"pubKey: ${hdKeyPair.getPublicKey.getKeyData.toHex}")
         System.err.println(s"signature: ${signature.toHex}")
         System.err.println(s"fileId: ${fileId.toHex}")
         System.err.println(s"encId: ${encId.toHex}")
     }
 
-    def merkleTreeFromIterator(chunks: Iterator[Array[Byte]]): MerkleTree = {
+    private def merkleTreeFromIterator(chunks: Iterator[Array[Byte]]): MerkleTree = {
         MerkleTree.fromHashes(ArraySeq.from(chunks.map(ByteString.unsafeFromArray)))
     }
 
-    def decrypt(secret: String, publicKeyHex: String, spendIfWrong: Boolean = false): Unit = {
+    private def decrypt(
+        secret: String,
+        publicKeyHex: String,
+        spendIfWrong: Boolean = false
+    ): Unit = {
         val preimage = Utils.hexToBytes(secret)
         val preimageHash = ByteString.unsafeFromArray(Utils.sha2_256(preimage))
         val chunks = chunksFromInputStream(System.in).toArray
@@ -331,10 +282,7 @@ object Bond:
         System.err.println(s"encId: ${encId.toHex}")
         val claim = encId ++ preimageHash
         // Verify the signature
-        val isVerified = {
-            ps.verifyEd25519Signature(publicKey, claim, signature)
-
-        }
+        val isVerified = ps.verifyEd25519Signature(publicKey, claim, signature)
 
         if !isVerified then
             System.err.println("Signature mismatch")
@@ -342,7 +290,7 @@ object Bond:
 
         val decryptedFile = System.out
 
-        chunks.iterator.drop(3).grouped(2).zipWithIndex.foreach { (it, index) =>
+        for (it, index) <- chunks.iterator.drop(3).grouped(2).zipWithIndex do
             val (encryptedChunk, hash) = (it(0), it(1))
             val decrypted = Encryption.decryptChunk(encryptedChunk, preimage, index)
             val computedHash = Utils.sha2_256(decrypted)
@@ -373,11 +321,11 @@ object Bond:
                 sys.exit(1)
             }
             decryptedFile.write(decrypted)
-        }
+
         System.err.println("Successfully decrypted")
     }
 
-    def verify(publicKeyHex: String): Unit = {
+    private def verify(publicKeyHex: String): Unit = {
         val chunks = chunksFromInputStream(System.in).toArray
         val signature = ByteString.fromArray(chunks(0) ++ chunks(1)) // 64 bytes, 2 chunks
         val publicKey = ByteString.fromHex(publicKeyHex)
@@ -417,14 +365,14 @@ object Bond:
         System.err.println(
           s"Looking up for bond UTxO with address ${scriptAddress} and bondConfig: $bondConfig"
         )
-        if result.isPresent()
+        if result.isPresent
         then System.err.println(s"Found bond utxo: ${result.get()}")
         else
             System.err.println("Bond does not exist")
             sys.exit(1)
     }
 
-    def dataToCardanoClientPlutusData(data: Data): PlutusData = {
+    private def dataToCardanoClientPlutusData(data: Data): PlutusData = {
         import scala.jdk.CollectionConverters.*
         data match
             case Data.Constr(tag, args) =>
@@ -460,7 +408,7 @@ object Bond:
                 BytesPlutusData.of(b.bytes)
     }
 
-    def makeBondTx() = {
+    private def makeBondTx(): Unit = {
 
         val chunks = chunksFromInputStream(System.in).toArray
         val signature = chunks(0) ++ chunks(1) // 64 bytes, 2 chunks
@@ -477,7 +425,7 @@ object Bond:
         System.err.println(s"bond contract address: $scriptAddress")
 
         val sender = new Account(Networks.testnet(), System.getenv("MNEMONIC"))
-        val pubKey = sender.hdKeyPair().getPublicKey()
+        val pubKey = sender.hdKeyPair().getPublicKey
         val backendService = new BFBackendService(
           Constants.BLOCKFROST_PREVIEW_URL,
           System.getenv("BLOCKFROST_API_KEY")
@@ -486,14 +434,14 @@ object Bond:
         val bondConfig = BondContract.BondConfig(
           paymentHash,
           encId,
-          ByteString.unsafeFromArray(pubKey.getKeyData()),
-          ByteString.unsafeFromArray(pubKey.getKeyHash())
+          ByteString.unsafeFromArray(pubKey.getKeyData),
+          ByteString.unsafeFromArray(pubKey.getKeyHash)
         )
         val datumData = dataToCardanoClientPlutusData(bondConfig.toData)
         // val datumData = PlutusData.unit()
         val tx = new Tx()
             .payToContract(scriptAddress, Amount.ada(100), datumData)
-            .from(sender.getBaseAddress().getAddress())
+            .from(sender.getBaseAddress.getAddress)
 
         val result = quickTxBuilder
             .compose(tx)
@@ -502,7 +450,7 @@ object Bond:
         println(result)
     }
 
-    def findBondUtxo(bondConfig: BondConfig) = {
+    private def findBondUtxo(bondConfig: BondConfig) = {
         val plutusScript = PlutusV2Script
             .builder()
             .`type`("PlutusScriptV2")
@@ -516,12 +464,12 @@ object Bond:
           Constants.BLOCKFROST_PREVIEW_URL,
           System.getenv("BLOCKFROST_API_KEY")
         )
-        val utxoSupplier = new DefaultUtxoSupplier(backendService.getUtxoService())
+        val utxoSupplier = new DefaultUtxoSupplier(backendService.getUtxoService)
         val datumData = dataToCardanoClientPlutusData(bondConfig.toData)
         ScriptUtxoFinders.findFirstByInlineDatum(utxoSupplier, scriptAddress, datumData)
     }
 
-    def spendBondWithFraudProof(
+    private def spendBondWithFraudProof(
         signature: ByteString,
         preimage: ByteString,
         encryptedChunk: ByteString,
@@ -529,14 +477,14 @@ object Bond:
         chunkIndex: BigInt,
         encId: String,
         merkleProof: Seq[ByteString]
-    ) = {
+    ): Unit = {
         val sender = new Account(Networks.testnet(), System.getenv("MNEMONIC"))
         val paymentHash = sha2_256(preimage)
         val bondConfig = BondContract.BondConfig(
           paymentHash,
           ByteString.fromHex(encId),
-          ByteString.unsafeFromArray(sender.hdKeyPair().getPublicKey().getKeyData()),
-          ByteString.unsafeFromArray(sender.hdKeyPair().getPublicKey().getKeyHash())
+          ByteString.unsafeFromArray(sender.hdKeyPair().getPublicKey.getKeyData),
+          ByteString.unsafeFromArray(sender.hdKeyPair().getPublicKey.getKeyHash)
         )
         System.err.println(s"bondConfig: $bondConfig")
         val fraudProof = BondAction.FraudProof(
@@ -550,20 +498,20 @@ object Bond:
         spendBond(sender, bondConfig, fraudProof)
     }
 
-    def withdraw(preimage: String, encId: String) = {
+    def withdraw(preimage: String, encId: String): Unit = {
         val sender = new Account(Networks.testnet(), System.getenv("MNEMONIC"))
         val paymentHash = sha2_256(ByteString.fromHex(preimage))
-        val pubKey = sender.hdKeyPair().getPublicKey()
+        val pubKey = sender.hdKeyPair().getPublicKey
         val bondConfig = BondContract.BondConfig(
           paymentHash,
           ByteString.fromHex(encId),
-          ByteString.unsafeFromArray(pubKey.getKeyData()),
-          ByteString.unsafeFromArray(pubKey.getKeyHash())
+          ByteString.unsafeFromArray(pubKey.getKeyData),
+          ByteString.unsafeFromArray(pubKey.getKeyHash)
         )
         spendBond(sender, bondConfig, BondAction.Withdraw(ByteString.fromHex(preimage)))
     }
 
-    def spendBond(sender: Account, bondConfig: BondConfig, bondAction: BondAction) = {
+    private def spendBond(sender: Account, bondConfig: BondConfig, bondAction: BondAction): Unit = {
         val plutusScript = PlutusV2Script
             .builder()
             .`type`("PlutusScriptV2")
@@ -577,7 +525,7 @@ object Bond:
           Constants.BLOCKFROST_PREVIEW_URL,
           System.getenv("BLOCKFROST_API_KEY")
         )
-        val utxoSupplier = new DefaultUtxoSupplier(backendService.getUtxoService())
+        val utxoSupplier = new DefaultUtxoSupplier(backendService.getUtxoService)
         val datumData = dataToCardanoClientPlutusData(bondConfig.toData)
         // val datumData = PlutusData.unit()
         val utxo =
@@ -588,10 +536,10 @@ object Bond:
         val redeemer = dataToCardanoClientPlutusData(bondAction.toData)
         val scriptTx = new ScriptTx()
             .collectFrom(utxo, redeemer)
-            .payToAddress(sender.baseAddress(), utxo.getAmount())
+            .payToAddress(sender.baseAddress(), utxo.getAmount)
             .attachSpendingValidator(plutusScript)
 
-        val pubKeyHashBytes = sender.hdKeyPair().getPublicKey().getKeyHash()
+        val pubKeyHashBytes = sender.hdKeyPair().getPublicKey.getKeyHash
         val quickTxBuilder = new QuickTxBuilder(backendService)
         val tx = quickTxBuilder
             .compose(scriptTx)
@@ -600,26 +548,26 @@ object Bond:
             .withRequiredSigners(pubKeyHashBytes)
             .ignoreScriptCostEvaluationError(false)
             .buildAndSign()
-        System.err.println(tx.toJson())
-        val result = backendService.getTransactionService().submitTransaction(tx.serialize())
+        System.err.println(tx.toJson)
+        val result = backendService.getTransactionService.submitTransaction(tx.serialize())
         System.err.println(result)
     }
 
-    def showKeys() = {
+    private def showKeys(): Unit = {
         val sender = new Account(Networks.testnet(), System.getenv("MNEMONIC"))
-        println(s"private key: ${sender.hdKeyPair().getPrivateKey().getKeyData().toHex}")
+        println(s"private key: ${sender.hdKeyPair().getPrivateKey.getKeyData.toHex}")
         println(s"public key: ${sender.publicKeyBytes().toHex}")
     }
 
-    @main def main(cmd: String, others: String*) = {
+    @main def main(cmd: String, others: String*): Unit = {
         cmd match
             case "info" =>
                 println(compiledBondScript.pretty.render(100))
                 // println(bondProgram.doubleCborHex)
                 // println(compiledHtlcScript.pretty.render(100))
                 // println(htlcProgram.doubleCborHex)
-                println(s"bondProgram size: ${bondProgram.doubleCborEncoded.size}")
-                println(s"htlcProgram size: ${htlcProgram.doubleCborEncoded.size}")
+                println(s"bondProgram size: ${bondProgram.doubleCborEncoded.length}")
+                println(s"htlcProgram size: ${htlcProgram.doubleCborEncoded.length}")
             case "publish"       => publish()
             case "encrypt"       => encrypt(others.head, encryptIncorrectly = false)
             case "encrypt-wrong" => encrypt(others.head, encryptIncorrectly = true)

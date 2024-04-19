@@ -7,6 +7,7 @@ package adastream
 import adastream.BondContract.BondAction
 import adastream.BondContract.BondConfig
 import com.bloxbean.cardano.client.crypto.api.impl.EdDSASigningProvider
+import org.bouncycastle.crypto.AsymmetricCipherKeyPair
 import org.bouncycastle.crypto.digests.Blake2bDigest
 import org.bouncycastle.crypto.generators.Ed25519KeyPairGenerator
 import org.bouncycastle.crypto.params.Ed25519KeyGenerationParameters
@@ -47,30 +48,30 @@ import scala.util.matching.Regex
 class ContractTests extends munit.ScalaCheckSuite {
     // generate ed25519 keys
     val RANDOM = new SecureRandom();
-    val ps = summon[PlatformSpecific]
+    val ps: PlatformSpecific = summon[PlatformSpecific]
     val keyPairGenerator = new Ed25519KeyPairGenerator();
     keyPairGenerator.init(new Ed25519KeyGenerationParameters(RANDOM));
-    val asymmetricCipherKeyPair = keyPairGenerator.generateKeyPair();
-    val privateKey =
-        asymmetricCipherKeyPair.getPrivate().asInstanceOf[Ed25519PrivateKeyParameters];
-    val publicKeyParams =
-        asymmetricCipherKeyPair.getPublic().asInstanceOf[Ed25519PublicKeyParameters];
-    val publicKey = ByteString.fromArray(publicKeyParams.getEncoded())
-    val preimage =
+    val asymmetricCipherKeyPair: AsymmetricCipherKeyPair = keyPairGenerator.generateKeyPair();
+    val privateKey: Ed25519PrivateKeyParameters =
+        asymmetricCipherKeyPair.getPrivate.asInstanceOf[Ed25519PrivateKeyParameters];
+    val publicKeyParams: Ed25519PublicKeyParameters =
+        asymmetricCipherKeyPair.getPublic.asInstanceOf[Ed25519PublicKeyParameters];
+    val publicKey: ByteString = ByteString.fromArray(publicKeyParams.getEncoded)
+    val preimage: ByteString =
         ByteString.fromHex("a64cf172224cab7a1b1da28e14719a810b5de126141d066892dada6b6b6e7ccd")
-    val preimageHash = ByteString.unsafeFromArray(Utils.sha2_256(preimage.bytes))
-    val encryptedChunk = ByteString.fromArray(Utils.sha2_256("encryptedChunk".getBytes))
-    val chunkHash = ByteString.fromArray(Utils.sha2_256("chunkHash".getBytes))
-    val encId = MerkleTree.fromHashes(ArraySeq(encryptedChunk, chunkHash)).getMerkleRoot
-    val bondConfig = BondConfig(
+    val preimageHash: ByteString = ByteString.unsafeFromArray(Utils.sha2_256(preimage.bytes))
+    val encryptedChunk: ByteString = ByteString.fromArray(Utils.sha2_256("encryptedChunk".getBytes))
+    val chunkHash: ByteString = ByteString.fromArray(Utils.sha2_256("chunkHash".getBytes))
+    val encId: ByteString = MerkleTree.fromHashes(ArraySeq(encryptedChunk, chunkHash)).getMerkleRoot
+    val bondConfig: BondConfig = BondConfig(
       preimageHash,
       encId,
       publicKey,
       ps.blake2b_224(publicKey)
     )
 
-    test(s"bondProgram size is ${Bond.bondProgram.doubleCborEncoded.size}") {
-        assert(Bond.bondProgram.doubleCborEncoded.size == 1111)
+    test(s"bondProgram size is ${Bond.bondProgram.doubleCborEncoded.length}") {
+        assert(Bond.bondProgram.doubleCborEncoded.length == 1111)
     }
 
     test("Server can withdraw with valid preimage and signature") {
@@ -163,7 +164,9 @@ class ContractTests extends munit.ScalaCheckSuite {
             )
             val claim = bondConfig.encId ++ bondConfig.preimageHash
             val signature = Encryption.signMessage(claim, privateKey)
-            val merkleProof = scalus.builtin.Data.List(merkleTree.makeMerkleProof(wrongChunkIndex).map(_.toData).toList)
+            val merkleProof = scalus.builtin.Data.List(
+              merkleTree.makeMerkleProof(wrongChunkIndex).map(_.toData).toList
+            )
             val action =
                 BondAction.FraudProof(
                   signature = signature,
@@ -190,7 +193,7 @@ class ContractTests extends munit.ScalaCheckSuite {
         bondConfig: BondConfig,
         withdraw: BondAction,
         signatures: scalus.prelude.List[PubKeyHash]
-    )(pf: PartialFunction[UplcEvalResult, A]) = {
+    )(pf: PartialFunction[UplcEvalResult, A]): A = {
         val scriptContext = makeScriptContext(signatures)
         val term =
             Bond.bondValidator $ bondConfig.toData $ withdraw.toData $ makeScriptContext(
@@ -313,7 +316,7 @@ class ContractTests extends munit.ScalaCheckSuite {
         }
     }
 
-    def makeScriptContext(signatories: scalus.prelude.List[PubKeyHash]) =
+    def makeScriptContext(signatories: scalus.prelude.List[PubKeyHash]): ScriptContext =
         ScriptContext(
           TxInfo(
             inputs = scalus.prelude.List.Nil,
