@@ -40,10 +40,12 @@ If you use Nix, you can run `nix develop` to get a shell with all the dependenci
 ### Export your preview wallet mnemonic and BlockFrost API key
 
 I use PrivateKey and Public Key from the first address of the wallet create from a mnemonic phrase.
+Here's a random mnemonic phrase for testing purposes. 
+Do not use it in production.
 
 ```bash
-  export MNEMONIC="your mnemonic"
-  export BLOCKFROST_API_KEY="your blockfrost api key"
+export MNEMONIC="accident cluster album vacuum witness rather right clown liquid shallow liar myself now okay toy potato toe achieve sphere piano crush drum vivid jungle"
+export BLOCKFROST_API_KEY="your blockfrost api key"
 ```
 
 If you don't have BlockFrost API key it still can work, but you will not be able to create transactions.
@@ -51,28 +53,28 @@ If you don't have BlockFrost API key it still can work, but you will not be able
 ### Build the project
 
 ```bash
-  scala-cli --power package . -o adastream --assembly
+scala-cli --power package . -o adastream --assembly
 ```
 
 ### Get the keys
 
 ```bash
-  ./adastream keys
-  export pubKeyHex="your public key hex"
+./adastream keys
+export pubKeyHex="640441A18DCD46E08EF74B7E3B038B11355F9BBC58B60ADEC3E8165771E51E00"
 ```
 
 ### Encrypt a file
 
 ```bash
-  export preimage=$(head -c 32 /dev/urandom | xxd -p -c 64)
-  cat bitcoin.pdf | ./adastream encrypt $preimage  > bitcoin.pdf.encrypted
+export preimage=$(head -c 32 /dev/urandom | xxd -p -c 64)
+cat bitcoin.pdf | ./adastream encrypt $preimage  > bitcoin.pdf.encrypted
 ```
 
 If you want to test the fraud proof, you can produce a wrongly encrypted file.
 
 ```bash
-  export preimage=$(head -c 32 /dev/urandom | xxd -p -c 64)
-  cat bitcoin.pdf | ./adastream encrypt-wrong $preimage  > bitcoin.pdf.encrypted-wrong
+export preimage=$(head -c 32 /dev/urandom | xxd -p -c 64)
+cat bitcoin.pdf | ./adastream encrypt-wrong $preimage  > bitcoin.pdf.encrypted-wrong
 ```
 
 ### Verify a file
