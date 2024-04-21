@@ -48,55 +48,72 @@ I use PrivateKey and Public Key from the first address of the wallet create from
 
 If you don't have BlockFrost API key it still can work, but you will not be able to create transactions.
 
+### Build the project
+
+```bash
+  scala-cli --power package . -o adastream --assembly
+```
+
 ### Get the keys
 
 ```bash
-  scala-cli . -- keys
+  ./adastream keys
+  export pubKeyHex="your public key hex"
 ```
 
 ### Encrypt a file
 
 ```bash
   export preimage=$(head -c 32 /dev/urandom | xxd -p -c 64)
-  cat bitcoin.pdf | scala-cli . -- encrypt $preimage  > bitcoin.pdf.encrypted
+  cat bitcoin.pdf | ./adastream encrypt $preimage  > bitcoin.pdf.encrypted
 ```
 
 If you want to test the fraud proof, you can produce a wrongly encrypted file.
 
 ```bash
   export preimage=$(head -c 32 /dev/urandom | xxd -p -c 64)
-  cat bitcoin.pdf | scala-cli . -- encrypt-wrong $preimage  > bitcoin.pdf.encrypted-wrong
+  cat bitcoin.pdf | ./adastream encrypt-wrong $preimage  > bitcoin.pdf.encrypted-wrong
 ```
 
 ### Verify a file
 
 ```bash
-  cat bitcoin.pdf.encrypted | scala-cli . -- verify $pubKeyHex
+  cat bitcoin.pdf.encrypted | ./adastream verify $pubKeyHex
 ```
 
 ### Create a bond contract transaction on Cardano Preview network
 
 ```bash
-  cat bitcoin.pdf.encrypted | scala-cli . -- bond
+  cat bitcoin.pdf.encrypted | ./adastream bond
 ```
 
 ### Create a bond withdraw transaction on Cardano Preview network
 
 ```bash
-  cat bitcoin.pdf.encrypted | scala-cli . -- withdraw $preimage $encId
+  cat bitcoin.pdf.encrypted | ./adastream withdraw $preimage $encId
 ```
 
 ### Decrypt a file
 
 ```bash
-  cat bitcoin.pdf.encrypted | scala-cli . -- decrypt $preimage $pubKeyHex > bitcoin.decrypted.pdf
+  cat bitcoin.pdf.encrypted | ./adastream decrypt $preimage $pubKeyHex > bitcoin.decrypted.pdf
 ```
 
 ### Create a fraud proof transaction on Cardano Preview network
 
 ```bash
-  cat bitcoin.pdf.encrypted-wrong | scala-cli . -- spend-bond $preimage $pubKeyHex > /dev/null
+  cat bitcoin.pdf.encrypted-wrong | ./adastream spend-bond $preimage $pubKeyHex > /dev/null
 ```
+
+### Run an API server
+
+```bash
+  ./adastream server
+```
+
+### Web API
+
+Open <http://localhost:8080/docs> in your browser to access the Swagger UI.
 
 ## On-Chain example
 

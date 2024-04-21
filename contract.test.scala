@@ -1,7 +1,3 @@
-//> using test.dep org.scalameta::munit::1.0.0-M10
-//> using test.dep org.scalameta::munit-scalacheck::1.0.0-M10
-//> using test.dep org.scalacheck::scalacheck::1.18.0
-
 package adastream
 
 import adastream.BondContract.BondAction
@@ -70,8 +66,8 @@ class ContractTests extends munit.ScalaCheckSuite {
       ps.blake2b_224(publicKey)
     )
 
-    test(s"bondProgram size is ${Bond.bondProgram.doubleCborEncoded.length}") {
-        assert(Bond.bondProgram.doubleCborEncoded.length == 1111)
+    test(s"bondProgram size is ${bondProgram.doubleCborEncoded.length}") {
+        assert(bondProgram.doubleCborEncoded.length == 1111)
     }
 
     test("Server can withdraw with valid preimage and signature") {
@@ -196,7 +192,7 @@ class ContractTests extends munit.ScalaCheckSuite {
     )(pf: PartialFunction[UplcEvalResult, A]): A = {
         val scriptContext = makeScriptContext(signatures)
         val term =
-            Bond.bondValidator $ bondConfig.toData $ withdraw.toData $ makeScriptContext(
+            bondValidator $ bondConfig.toData $ withdraw.toData $ makeScriptContext(
               signatures
             ).toData
         val result = PlutusUplcEval.evalFlat(Program((1, 0, 0), term))
@@ -245,7 +241,7 @@ class ContractTests extends munit.ScalaCheckSuite {
     }
 
     test("xorBytes performance") {
-        val term = Bond.xorBytesScript $ BigInt(1) $ BigInt(2)
+        val term = xorBytesScript $ BigInt(1) $ BigInt(2)
         val result = PlutusUplcEval.evalFlat(Program((1, 0, 0), term))
         result match
             case UplcEvalResult.Success(term, budget, logs)   => println(s"$term => $budget, $logs")
