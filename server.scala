@@ -1,6 +1,8 @@
 package adastream
 
 import sttp.tapir.swagger.bundle.SwaggerInterpreter
+import java.nio.file.Files
+import java.nio.file.Path
 
 object Server:
     import sttp.tapir.*
@@ -17,8 +19,13 @@ object Server:
     val upload =
         endpoint.put
             .in("upload")
+            .in(inputStreamBody)
             .out(stringJsonBody)
-            .serverLogicSuccess[Id](name => ujson.Str("uploaded").toString)
+            .serverLogicSuccess[Id]: stream =>
+                // write stream to file
+                Files.copy(stream, Path.of("uploaded"))
+                ujson.Str("uploaded").toString
+
     val download =
         endpoint.get
             .in("download")
