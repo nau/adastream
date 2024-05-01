@@ -8,6 +8,7 @@
 //> using dep com.bloxbean.cardano:cardano-client-lib:0.5.1
 //> using dep com.bloxbean.cardano:cardano-client-backend-blockfrost:0.5.1
 //> using dep com.softwaremill.sttp.tapir::tapir-core:1.10.6
+//> using dep com.softwaremill.sttp.tapir::tapir-files:1.10.6
 //> using dep com.softwaremill.sttp.tapir::tapir-netty-server-sync:1.10.6
 //> using dep com.softwaremill.sttp.tapir::tapir-swagger-ui-bundle:1.10.6
 //> using test.dep org.scalameta::munit::1.0.0-M10
