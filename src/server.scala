@@ -16,6 +16,9 @@ import com.bloxbean.cardano.client.crypto.bip32.HdKeyPair
 import com.bloxbean.cardano.client.crypto.config.CryptoConfiguration
 import java.io.InputStream
 import java.io.File
+import scala.util.Failure
+import scala.util.Success
+import scala.util.Try
 
 class Server(
     val hdKeyPair: HdKeyPair,
@@ -25,15 +28,7 @@ class Server(
     val preimage = secret
     val preimageHash = sha2_256(preimage)
     val signingProvider = CryptoConfiguration.INSTANCE.getSigningProvider
-    val getKeys =
-        endpoint.get
-            .in("keys")
-            .out(stringJsonBody)
-            .serverLogicSuccess[Id](name =>
-                ujson
-                    .Obj("publicKey" -> publicKey.toHex, "privateKey" -> privateKey.toHex)
-                    .toString
-            )
+
     val upload =
         endpoint.put
             .in("upload")
@@ -45,8 +40,17 @@ class Server(
         endpoint.get
             .in("download" / path[String]("fileId"))
             .out(fileBody)
-            .serverLogicSuccess[Id](downloadFile)
-    val apiEndpoints = List(getKeys, upload, download)
+            .errorOut(stringBody.map[Throwable](sys.error)(_.getMessage))
+            .serverLogic[Id](downloadFile)
+
+    val stream =
+        endpoint.get
+            .in("stream" / path[String]("fileId"))
+            .in(query[String]("secret"))
+            .out(inputStreamBody)
+            .serverLogicSuccess[Id](streamFile)
+
+    val apiEndpoints = List(upload, download, stream)
     val swaggerEndpoints =
         SwaggerInterpreter().fromEndpoints[Id](apiEndpoints.map(_.endpoint), "AdaStream", "0.1")
 
@@ -93,9 +97,51 @@ class Server(
         println(json)
         json
 
-    def downloadFile(fileId: String): Id[File] =
+    def downloadFile(fileId: String): Id[Either[Throwable, File]] =
+        Try {
+            val path = filesDirectory.resolve(fileId)
+            path.toFile
+        }.toEither
+
+    def streamFile(input: (String, String)): Id[InputStream] =
+        val (fileId, secret) = input
         val path = filesDirectory.resolve(fileId)
-        path.toFile
+        val is = Files.newInputStream(path)
+        val decryptedChunks =
+            val chunks = chunksFromInputStream(is)
+            for (it, index) <- chunks.iterator.grouped(2).zipWithIndex
+            yield
+                val (encryptedChunk, hash) = (it(0), it(1))
+                val decrypted = Encryption.decryptChunk(encryptedChunk, preimage.bytes, index)
+                val chunkHash = sha2_256(ByteString.fromArray(decrypted))
+                if chunkHash.bytes.sameElements(hash)
+                then decrypted
+                else throw new RuntimeException("Chunk hash mismatch")
+
+        new InputStream {
+            var current: Array[Byte] = null
+            var index = 0
+            val iterator: Iterator[Array[Byte]] = decryptedChunks
+
+            override def read(): Int =
+                current match
+                    case null =>
+                        if iterator.hasNext
+                        then
+                            current = iterator.next()
+                            read()
+                        else -1
+                    case arr =>
+                        if index < arr.length
+                        then
+                            val byte = arr(index)
+                            index += 1
+                            byte
+                        else
+                            current = null
+                            index = 0
+                            read()
+        }
 
     def start(): Unit =
         NettySyncServer()
