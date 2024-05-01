@@ -33,6 +33,49 @@ import scala.collection.immutable.ArraySeq
 import scala.collection.mutable.ArrayBuffer
 import scala.util.Random
 
+/** Rolling Merkle tree implementation
+  */
+class MerkleTreeRootBuilder {
+    private val levels: ArrayBuffer[ByteString] = ArrayBuffer.empty
+
+    private def addHashAtLevel(hash: ByteString, startingLevel: Int): this.type = {
+        var levelHash = hash
+        var level = startingLevel
+
+        // Process each level to find a place for the new hash
+        while level < levels.length do
+            if levels(level) == null then
+                // If no hash is present at this level, just add the current hash
+                levels(level) = levelHash
+                return this
+            else
+                // If there is a hash, combine it with the current hash and move up one level
+                levelHash = sha2_256(levels(level) ++ levelHash)
+                levels(level) = null // Clear the hash as it's been moved up
+                level += 1
+
+        // If we exit the loop, it means we're adding a new level to the tree
+        levels.append(levelHash)
+        this
+    }
+
+    def addHash(hash: ByteString): this.type = {
+        addHashAtLevel(hash, 0)
+        this
+    }
+
+    def getMerkleRoot: ByteString =
+        if levels.isEmpty then ByteString.unsafeFromArray(new Array[Byte](32))
+        else if levels.size == 1 then levels.head
+        else
+            var index = 0
+            while index < levels.length do
+                if levels(index) != null && index < levels.length - 1
+                then addHashAtLevel(levels(index), index)
+                index += 1
+            levels.last
+}
+
 class MerkleTree(private val levels: ArrayBuffer[ArrayBuffer[ByteString]]) {
     def getMerkleRoot: ByteString = {
         levels.last.head
@@ -557,8 +600,13 @@ private def showKeys(): Unit = {
     println(s"public key: ${publicKey.toHex}")
 }
 
-private def server(): Unit = {
-    Server.start()
+private def server(secret: String, uploadDir: Path): Unit = {
+    // val mnemonic = "face reform cry tissue august tell hair dress jungle useful stamp mean traffic donor shy youth engine wine champion chair crush note member window"
+    val mnemonic = System.getenv("MNEMONIC")
+    val hdKeyPair = new CIP1852()
+        .getKeyPairFromMnemonic(mnemonic, DerivationPath.createExternalAddressDerivationPath(0))
+    println(s"Starting server with public key: ${hdKeyPair.getPublicKey.getKeyData.toHex}")
+    Server(hdKeyPair, ByteString.fromHex(secret), uploadDir).start()
 }
 
 @main def main(cmd: String, others: String*): Unit = {
@@ -579,5 +627,5 @@ private def server(): Unit = {
         case "bond"          => makeBondTx()
         case "withdraw"      => withdraw(others.head, others(1))
         case "keys"          => showKeys()
-        case "server"        => server()
+        case "server"        => server(others.head, Path.of(others(1)))
 }
