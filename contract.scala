@@ -153,7 +153,7 @@ object BondContract {
               )
             )
             expectedChunkHash != chunkHash
-        trace("verifyWrongChunkHash")(true)
+        trace("verifyWrongChunkHash")(())
         val verifyValidClaimSignature = {
             val claim = appendByteString(encId, preimageHash)
             verifyEd25519Signature(
@@ -162,10 +162,10 @@ object BondContract {
               signature
             )
         }
-        trace("verifyValidClaimSignature")(true)
+        trace("verifyValidClaimSignature")(())
 
         val verifyValidPreimage = verifyPreimage(preimage, preimageHash)
-        trace("verifyValidPreimage")(true)
+        trace("verifyValidPreimage")(())
 
         val merkleInclusionProofValid = verifyMerkleInclusionProof(
           merkleProof,
@@ -182,10 +182,10 @@ object BondContract {
     def bondContractValidator(datum: Data, redeemer: Data, ctxData: Data): Boolean = {
         fromData[BondConfig](datum) match
             case BondConfig(preimageHash, encId, serverPubKey, serverPkh) =>
-                val a = trace("fromData[BondConfig]")(true)
+                trace("fromData[BondConfig]")(())
                 fromData[BondAction](redeemer) match
                     case BondAction.Withdraw(preimage) =>
-                        val a = trace("BondAction.Withdraw(preimage)")(true)
+                        trace("BondAction.Withdraw(preimage)")(())
                         val signatories = fieldAsData[ScriptContext](_.txInfo.signatories)(ctxData)
                         val pkh =
                             unBData(unListData(signatories).head)
@@ -201,7 +201,7 @@ object BondContract {
                           chunkIndex,
                           merkleProof
                         ) =>
-                        val a = trace("BondAction.FraudProof")(true)
+                        trace("BondAction.FraudProof")(())
                         verifyFraudProof(
                           chunkHash,
                           chunkIndex,
