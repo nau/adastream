@@ -1,45 +1,31 @@
 package adastream
 
-import adastream.BondContract.BondAction
-import adastream.BondContract.BondConfig
-import com.bloxbean.cardano.client.crypto.api.impl.EdDSASigningProvider
+import adastream.BondContract.{BondAction, BondConfig}
 import org.bouncycastle.crypto.AsymmetricCipherKeyPair
-import org.bouncycastle.crypto.digests.Blake2bDigest
 import org.bouncycastle.crypto.generators.Ed25519KeyPairGenerator
-import org.bouncycastle.crypto.params.Ed25519KeyGenerationParameters
-import org.bouncycastle.crypto.params.Ed25519PrivateKeyParameters
-import org.bouncycastle.crypto.params.Ed25519PublicKeyParameters
-import org.bouncycastle.crypto.signers.Ed25519Signer
-import org.scalacheck.Arbitrary
-import org.scalacheck.Gen
+import org.bouncycastle.crypto.params.{
+    Ed25519KeyGenerationParameters,
+    Ed25519PrivateKeyParameters,
+    Ed25519PublicKeyParameters
+}
 import org.scalacheck.Prop.*
-import org.scalacheck.Shrink
-import scalus.builtin.Builtins
-import scalus.builtin.ByteString
+import org.scalacheck.{Arbitrary, Gen, Shrink}
 import scalus.builtin.ByteString.StringInterpolators
 import scalus.builtin.Data.toData
-import scalus.builtin.PlatformSpecific
 import scalus.builtin.ToDataInstances.given
-import scalus.builtin.given
+import scalus.builtin.{ByteString, PlatformSpecific, given}
 import scalus.ledger.api.v2.*
 import scalus.ledger.api.v2.ToDataInstances.given
-import scalus.toUplc
-import scalus.uplc.DeBruijn
-import scalus.uplc.Program
-import scalus.uplc.Term
 import scalus.uplc.TermDSL.{*, given}
-import scalus.uplc.UplcParser
 import scalus.uplc.eval.*
+import scalus.uplc.{DeBruijn, Program, Term, UplcParser}
 import scalus.utils.Utils
 
 import java.io.ByteArrayInputStream
-import java.io.File
-import java.nio.charset.StandardCharsets
 import java.nio.file.Path
 import java.security.SecureRandom
 import scala.collection.immutable.ArraySeq
 import scala.util.control.NonFatal
-import scala.util.matching.Regex
 
 class ContractTests extends munit.ScalaCheckSuite {
     // generate ed25519 keys
@@ -67,7 +53,7 @@ class ContractTests extends munit.ScalaCheckSuite {
     )
 
     test(s"bondProgram size is ${bondProgram.doubleCborEncoded.length}") {
-        assert(bondProgram.doubleCborEncoded.length == 1110)
+        assert(bondProgram.doubleCborEncoded.length == 1063)
     }
 
     test("Server can withdraw with valid preimage and signature") {
@@ -75,11 +61,11 @@ class ContractTests extends munit.ScalaCheckSuite {
         evalBondValidator(
           bondConfig,
           withdraw,
-          scalus.prelude.List(PubKeyHash(bondConfig.serverPkh))
+          scalus.prelude.List(PubKeyHash(bondConfig.serverPubKeyHash))
         ) {
             case UplcEvalResult.Success(term, budget, logs) =>
-                assert(budget.cpu < 14_000000L)
-                assert(budget.memory < 50000L)
+                assert(0 < budget.cpu && budget.cpu < 14_000000L)
+                assert(0 < budget.memory && budget.memory < 50000L)
             case UplcEvalResult.UplcFailure(errorCode, error) =>
                 fail(s"UplcFailure: $errorCode, $error")
         }
@@ -110,7 +96,7 @@ class ContractTests extends munit.ScalaCheckSuite {
         evalBondValidator(
           bondConfig,
           withdraw,
-          scalus.prelude.List(PubKeyHash(bondConfig.serverPkh))
+          scalus.prelude.List(PubKeyHash(bondConfig.serverPubKeyHash))
         ) {
             case UplcEvalResult.Success(term, _, logs) =>
                 fail(s"should fail but got result $term with logs $logs")
@@ -157,7 +143,7 @@ class ContractTests extends munit.ScalaCheckSuite {
               publicKey,
               ps.blake2b_224(publicKey)
             )
-            val claim = bondConfig.encId ++ bondConfig.preimageHash
+            val claim = bondConfig.encryptedId ++ bondConfig.passwordHash
             val signature = Encryption.signMessage(claim, privateKey)
             val merkleProof = scalus.builtin.Data.List(
               merkleTree.makeMerkleProof(wrongChunkIndex).map(_.toData).toList
@@ -165,7 +151,7 @@ class ContractTests extends munit.ScalaCheckSuite {
             val action =
                 BondAction.FraudProof(
                   signature = signature,
-                  preimage = preimage,
+                  password = preimage,
                   encryptedChunk = wrongEncryptedChunk,
                   chunkHash = wrongChunkHash,
                   chunkIndex = wrongChunkIndex,
@@ -207,21 +193,23 @@ class ContractTests extends munit.ScalaCheckSuite {
         try cekMachine.evaluateTerm(debruijnedTerm)
         catch case NonFatal(e) => ()
         val r = tallyingBudgetSpender.budgetSpender.getSpentBudget
+        def showBudget(budget: ExBudget): String =
+            s"%.6f / %.6f".format(budget.cpu / 1000000d, budget.memory / 1000000d)
         result match
-            case UplcEvalResult.TermParsingError(error)  => fail(s"TermParsingError: $error")
+            case UplcEvalResult.TermParsingError(error) => fail(s"TermParsingError: $error")
             case UplcEvalResult.Success(_, budget, logs) =>
-                // println(logs)
-                // println(s"budget: $budget, scalus budget: $r")
-                // if budget != r then
-                // println(s"diff: ${budget.cpu - r.cpu}, ${budget.memory - r.memory}")
-                /* println(
+//                println(logs)
+//                println(s"budget: ${showBudget(budget)}, scalus budget: ${showBudget(r)}")
+//                if budget != r then
+//                    println(s"diff: ${budget.cpu - r.cpu}, ${budget.memory - r.memory}")
+                /*println(
                   s"Execution stats:\n${tallyingBudgetSpender.costs.toArray
                           .sortBy(_._1.toString())
                           .map { case (k, v) =>
-                              s"$k: $v"
+                              s"$k: ${showBudget(v)}"
                           }
                           .mkString("\n")}"
-                ) */
+                )*/
                 pf(result)
             case other => pf(other)
     }
@@ -243,7 +231,9 @@ class ContractTests extends munit.ScalaCheckSuite {
         val term = xorBytesScript $ BigInt(1) $ BigInt(2)
         val result = PlutusUplcEval.evalFlat(Program((1, 0, 0), term))
         result match
-            case UplcEvalResult.Success(term, budget, logs)   => println(s"$term => $budget, $logs")
+            case UplcEvalResult.Success(term, budget, logs)   =>
+                assertEquals(budget.cpu, 31_043509L)
+                assertEquals(budget.memory, 55706L)
             case UplcEvalResult.TermParsingError(error)       => fail(s"TermParsingError: $error")
             case UplcEvalResult.UplcFailure(errorCode, error) => fail(s"error: $error")
     }
@@ -350,11 +340,11 @@ object PlutusUplcEval:
         val cmd =
             "uplc evaluate --input-format flat --trace-mode LogsWithBudgets -c --print-mode Debug"
         var out = ""
-        val retCode = cmd.#<(new ByteArrayInputStream(flat)).!(ProcessLogger(o => out += o))
+        val retCode = cmd.#<(new ByteArrayInputStream(flat)).!(ProcessLogger(o => out += o + "\n"))
         if retCode == 0 then
             UplcParser.term.parse(out) match
                 case Right(remaining, term) =>
-                    val budget = raw"CPU budget:\s+(\d+)Memory budget:\s+(\d+)(.+)".r
+                    val budget = raw"(?s)CPU budget:\s+(\d+)\RMemory budget:\s+(\d+)\R(.+)".r
                     remaining match
                         case budget(cpu, memory, logs) =>
                             UplcEvalResult.Success(

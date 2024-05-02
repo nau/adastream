@@ -13,20 +13,33 @@ import scalus.utils.Utils
 
 extension (a: Array[Byte]) def toHex: String = Utils.bytesToHex(a)
 
+/** Bond contract
+  *
+  *   - Alice wants to buy a file from Bob.
+  *   - Bob encrypts the file with a random key (`password`) and sends encrypted file to Alice.
+  *   - Bob creates a bond contract on Cardano with a collateral and a commitment to the `password`
+  *     and the file.
+  *   - Alice pays Bob for the file via a HTLC (Hash Time Lock Contract), using Cardano or Bitcoin
+  *     Lightning Network.
+  *   - Alice decrypts the file with the key from the HTLC or takes the money back after the
+  *     timeout.
+  *   - If Bob cheats, Alice can prove it and get the collateral from the bond contract.
+  *   - Bob can withdraw the collateral by revealing the `password`.
+  */
 @Compile
 object BondContract {
     case class BondConfig(
-        preimageHash: ByteString,
-        encId: ByteString,
+        passwordHash: ByteString,
+        encryptedId: ByteString,
         serverPubKey: ByteString,
-        serverPkh: ByteString
+        serverPubKeyHash: ByteString
     )
 
     enum BondAction:
         case Withdraw(preimage: ByteString)
         case FraudProof(
             signature: ByteString,
-            preimage: ByteString,
+            password: ByteString,
             encryptedChunk: ByteString,
             chunkHash: ByteString,
             chunkIndex: BigInt,
@@ -64,6 +77,7 @@ object BondContract {
                       :: mkNilData()
                 )
 
+    /** Convert BigInt to ByteString */
     def integerToByteString(num: BigInt): ByteString =
         def loop(div: BigInt, result: ByteString): ByteString = {
             val shifted = num / div
@@ -98,6 +112,7 @@ object BondContract {
         else throw new Exception("X")
     }
 
+    /** Verifies Merkle inclusion proof */
     inline def verifyMerkleInclusionProof(
         merkleProof: Data,
         encryptedChunk: ByteString,
@@ -105,9 +120,7 @@ object BondContract {
         chunkIndex: BigInt,
         encId: ByteString
     ): Boolean =
-        val encryptedChunkAndChunkHashHash = sha2_256(
-          appendByteString(encryptedChunk, chunkHash)
-        )
+        val encryptedChunkAndChunkHashHash = sha2_256(appendByteString(encryptedChunk, chunkHash))
         def loop(index: BigInt, curHash: ByteString, siblings: List[Data]): ByteString =
             if siblings.isEmpty then curHash
             else
@@ -136,31 +149,14 @@ object BondContract {
         signature: ByteString
     ): Boolean =
         val verifyWrongChunkHash =
+            val preimageAndIndex = appendByteString(preimage, integerToByteString(chunkIndex))
             // hash( Ei ⊕ hash( preimage || i) ) ≠ Hi
-            val expectedChunkHash = sha2_256(
-              trace("xor")(
-                xor(
-                  encryptedChunk,
-                  trace("sha2_256")(
-                    sha2_256(
-                      appendByteString(
-                        preimage,
-                        trace("integerToByteString")(integerToByteString(chunkIndex))
-                      )
-                    )
-                  )
-                )
-              )
-            )
+            val expectedChunkHash = sha2_256(xor(encryptedChunk, sha2_256(preimageAndIndex)))
             expectedChunkHash != chunkHash
         trace("verifyWrongChunkHash")(())
         val verifyValidClaimSignature = {
             val claim = appendByteString(encId, preimageHash)
-            verifyEd25519Signature(
-              serverPubKey,
-              claim,
-              signature
-            )
+            verifyEd25519Signature(serverPubKey, claim, signature)
         }
         trace("verifyValidClaimSignature")(())
 
@@ -179,18 +175,34 @@ object BondContract {
         && (verifyValidPreimage || (throw new Exception("P")))
         && (merkleInclusionProofValid || (throw new Exception("M")))
 
+    /** Bond contract validator
+      *
+      * @param datum
+      *   BondConfig
+      * @param redeemer
+      *   BondAction
+      *   - Withdraw: Bob withdraws the collateral by revealing the `password`.
+      *   - FraudProof: Alice proves that Bob cheated and gets the collateral.
+      * @param ctxData
+      *   ScriptContext
+      */
     def bondContractValidator(datum: Data, redeemer: Data, ctxData: Data): Boolean = {
         fromData[BondConfig](datum) match
-            case BondConfig(preimageHash, encId, serverPubKey, serverPkh) =>
+            case BondConfig(passwordHash, encId, serverPubKey, serverPubKeyHash) =>
                 trace("fromData[BondConfig]")(())
                 fromData[BondAction](redeemer) match
-                    case BondAction.Withdraw(preimage) =>
+                    case BondAction.Withdraw(password) =>
                         trace("BondAction.Withdraw(preimage)")(())
+                        // get signatories from ScriptContext
                         val signatories = fieldAsData[ScriptContext](_.txInfo.signatories)(ctxData)
-                        val pkh =
-                            unBData(unListData(signatories).head)
-                        val verifySignature = pkh == serverPkh
-                        val verifyValidPreimage = verifyPreimage(preimage, preimageHash)
+                        // get PubKeyHash as a ByteString from the first signatory
+                        // NOTE: we assume that the first signatory is the server
+                        val pkh = unBData(unListData(signatories).head)
+                        // verify that the signatory is the server PubKeyHash from the BondConfig
+                        val verifySignature = pkh == serverPubKeyHash
+                        // verify that the password is the correct preimage of the passwordHash
+                        val verifyValidPreimage = verifyPreimage(password, passwordHash)
+                        // return true if both conditions are met
                         (verifySignature || (throw new Exception("S")))
                         && (verifyValidPreimage || (throw new Exception("P")))
                     case BondAction.FraudProof(
@@ -209,19 +221,18 @@ object BondContract {
                           encryptedChunk,
                           merkleProof,
                           preimage,
-                          preimageHash,
+                          passwordHash,
                           serverPubKey,
                           signature
                         )
     }
 
-    /*
-     * HTLC contract validator
-     */
-    def makeHtlcContractValidator(
-        clientPubKeyHash: Data,
-        expiration: POSIXTime,
-        hash: ByteString
+    /** Hash-Time Locked Contract validator
+      */
+    inline def makeHtlcContractValidator(
+        inline clientPubKeyHash: Data,
+        inline expiration: POSIXTime,
+        inline hash: ByteString
     )(datum: Data, redeemer: Data, ctxData: Data): Unit = {
         val validPreimage = hash == sha2_256(unBData(redeemer))
         val expired = {

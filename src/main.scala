@@ -13,9 +13,6 @@ import com.bloxbean.cardano.client.crypto.config.CryptoConfiguration
 import com.bloxbean.cardano.client.function.helper.{ScriptUtxoFinders, SignerProviders}
 import com.bloxbean.cardano.client.plutus.spec.*
 import com.bloxbean.cardano.client.quicktx.{QuickTxBuilder, ScriptTx, Tx}
-import org.bouncycastle.crypto.digests.SHA256Digest
-import org.bouncycastle.crypto.params.Ed25519PrivateKeyParameters
-import org.bouncycastle.crypto.signers.Ed25519Signer
 import scalus.*
 import scalus.Compiler.compile
 import scalus.builtin.Builtins.*
@@ -25,11 +22,8 @@ import scalus.ledger.api.v2.*
 import scalus.uplc.{Program, Term}
 import scalus.utils.Utils
 
-import java.io.InputStream
 import java.nio.file.Path
-import scala.annotation.tailrec
 import scala.collection.immutable.ArraySeq
-import scala.collection.mutable.ArrayBuffer
 import scala.util.Random
 
 private val ps: PlatformSpecific = summon[PlatformSpecific]
@@ -335,7 +329,7 @@ private def spendBondWithFraudProof(
     System.err.println(s"bondConfig: $bondConfig")
     val fraudProof = BondAction.FraudProof(
       signature = signature,
-      preimage = preimage,
+      password = preimage,
       encryptedChunk = encryptedChunk,
       chunkHash = chunkHash,
       chunkIndex = chunkIndex,
@@ -414,9 +408,9 @@ private def server(secret: String, uploadDir: Path): Unit = {
 @main def main(cmd: String, others: String*): Unit = {
     cmd match
         case "info" =>
-            println(compiledBondScript.pretty.render(100))
+            println(compiledBondScript.prettyXTerm.render(100))
             // println(bondProgram.doubleCborHex)
-            // println(compiledHtlcScript.pretty.render(100))
+            println(compiledHtlcScript.prettyXTerm.render(100))
             // println(htlcProgram.doubleCborHex)
             println(s"bondProgram size: ${bondProgram.doubleCborEncoded.length}")
             println(s"htlcProgram size: ${htlcProgram.doubleCborEncoded.length}")
