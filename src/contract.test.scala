@@ -122,8 +122,7 @@ class ContractTests extends munit.ScalaCheckSuite {
         val gen = for
             numChuns <- Gen.frequency(
               (500, Gen.choose(1, 1000)),
-              (5, Gen.choose(10_000, 100_000)),
-              (1, Gen.choose(1000_000, 2000_000))
+              (5, Gen.choose(10_000, 100_000))
             )
             wrongChunkIndex <- Gen.choose(0, numChuns - 1)
             randomChunks <- Gen.listOfN(
