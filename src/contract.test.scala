@@ -196,7 +196,7 @@ class ContractTests extends munit.ScalaCheckSuite {
         def showBudget(budget: ExBudget): String =
             s"%.6f / %.6f".format(budget.cpu / 1000000d, budget.memory / 1000000d)
         result match
-            case UplcEvalResult.TermParsingError(error) => fail(s"TermParsingError: $error")
+            case UplcEvalResult.TermParsingError(error)  => fail(s"TermParsingError: $error")
             case UplcEvalResult.Success(_, budget, logs) =>
 //                println(logs)
 //                println(s"budget: ${showBudget(budget)}, scalus budget: ${showBudget(r)}")
@@ -219,11 +219,11 @@ class ContractTests extends munit.ScalaCheckSuite {
             Encryption.calculateFileIdAndEncId(Path.of("bitcoin.pdf"), preimage.bytes)
         assertEquals(
           fileId.toHex,
-          "09E15338990511F7E8D8B8E9BE27ECC6ABE5CE3205E7DFF2A597A27C4148D577"
+          "09e15338990511f7e8d8b8e9be27ecc6abe5ce3205e7dff2a597a27c4148d577"
         )
         assertEquals(
           encId.toHex,
-          "065D1EBC27E1390C56D5C05275A1FC741F8256E181462605BB76FAA94B1D34C3"
+          "065d1ebc27e1390c56d5c05275a1fc741f8256e181462605bb76faa94b1d34c3"
         )
     }
 
@@ -231,7 +231,7 @@ class ContractTests extends munit.ScalaCheckSuite {
         val term = xorBytesScript $ BigInt(1) $ BigInt(2)
         val result = PlutusUplcEval.evalFlat(Program((1, 0, 0), term))
         result match
-            case UplcEvalResult.Success(term, budget, logs)   =>
+            case UplcEvalResult.Success(term, budget, logs) =>
                 assertEquals(budget.cpu, 31_043509L)
                 assertEquals(budget.memory, 55706L)
             case UplcEvalResult.TermParsingError(error)       => fail(s"TermParsingError: $error")

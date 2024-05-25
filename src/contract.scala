@@ -10,6 +10,7 @@ import scalus.ledger.api.v1.Extended
 import scalus.ledger.api.v1.FromDataInstances.given
 import scalus.ledger.api.v2.*
 import scalus.utils.Utils
+import scalus.ledger.api.v1.IntervalBoundType
 
 extension (a: Array[Byte]) def toHex: String = Utils.bytesToHex(a)
 
@@ -238,11 +239,9 @@ object BondContract {
         val expired = {
             val txInfoData = fieldAsData[ScriptContext](_.txInfo)(ctxData)
             val signatoriesData = fieldAsData[TxInfo](_.signatories)(txInfoData)
-            val txtime = fromData[POSIXTimeRange](
-              fieldAsData[TxInfo](_.validRange)(txInfoData)
-            )
-            txtime.from.extended match
-                case Extended.Finite(txtime) =>
+            val txtime = fromData[POSIXTimeRange](fieldAsData[TxInfo](_.validRange)(txInfoData))
+            txtime.from.boundType match
+                case IntervalBoundType.Finite(txtime) =>
                     val expired = expiration < txtime
                     val signedByClient = {
                         val signaturePubKeyHashData = unListData(signatoriesData).head

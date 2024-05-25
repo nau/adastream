@@ -25,6 +25,11 @@ import scalus.utils.Utils
 import java.nio.file.Path
 import scala.collection.immutable.ArraySeq
 import scala.util.Random
+import scalus.bloxbean.Interop
+import scalus.bloxbean.ScalusTransactionEvaluator
+import scalus.bloxbean.ScriptSupplier
+import scalus.bloxbean.NoScriptSupplier
+import scalus.bloxbean.EvaluatorMode
 
 private val ps: PlatformSpecific = summon[PlatformSpecific]
 private val compiledBondScript = compile(BondContract.bondContractValidator)
@@ -35,7 +40,7 @@ val xorBytesScript: Term = compile(BondContract.xorBytes).toUplc(generateErrorTr
 private val htlcValidator = compiledHtlcScript.toUplc(generateErrorTraces = true)
 private val htlcProgram = Program((1, 0, 0), htlcValidator)
 
-lazy val sender = new Account(Networks.testnet(), System.getenv("MNEMONIC"))
+lazy val sender = new Account(Networks.preview(), System.getenv("MNEMONIC"))
 lazy val privateKey = ByteString.fromArray(sender.privateKeyBytes)
 lazy val publicKey = ByteString.fromArray(sender.publicKeyBytes)
 lazy val publicKeyHash = ByteString.fromArray(sender.hdKeyPair.getPublicKey.getKeyHash)
@@ -79,7 +84,7 @@ private def encrypt(secret: String, encryptIncorrectly: Boolean): Unit = {
     val hdKeyPair = new CIP1852().getKeyPairFromMnemonic(
       mnemonic,
       DerivationPath.createExternalAddressDerivationPath(0)
-    );
+    )
     val signature =
         signingProvider.signExtended(claim.bytes, hdKeyPair.getPrivateKey.getKeyData)
     val fileOut = System.out
@@ -91,6 +96,7 @@ private def encrypt(secret: String, encryptIncorrectly: Boolean): Unit = {
     System.err.println(s"preimage: ${Utils.bytesToHex(preimage)}")
     System.err.println(s"preimageHash: ${preimageHash.toHex}")
     System.err.println(s"pubKey: ${hdKeyPair.getPublicKey.getKeyData.toHex}")
+    System.err.println(s"pubKeyHash: ${hdKeyPair.getPublicKey.getKeyHash.toHex}")
     System.err.println(s"signature: ${signature.toHex}")
     System.err.println(s"fileId: ${fileId.toHex}")
     System.err.println(s"encId: ${encId.toHex}")
@@ -215,42 +221,6 @@ private def verify(publicKeyHex: String): Unit = {
         sys.exit(1)
 }
 
-private def dataToCardanoClientPlutusData(data: Data): PlutusData = {
-    import scala.jdk.CollectionConverters.*
-    data match
-        case Data.Constr(tag, args) =>
-            val convertedArgs = ListPlutusData
-                .builder()
-                .plutusDataList(args.map(dataToCardanoClientPlutusData).asJava)
-                .build()
-            ConstrPlutusData
-                .builder()
-                .alternative(tag)
-                .data(convertedArgs)
-                .build()
-        case Data.Map(items) =>
-            MapPlutusData
-                .builder()
-                .map(
-                  items
-                      .map { case (k, v) =>
-                          (dataToCardanoClientPlutusData(k), dataToCardanoClientPlutusData(v))
-                      }
-                      .toMap
-                      .asJava
-                )
-                .build()
-        case Data.List(items) =>
-            ListPlutusData
-                .builder()
-                .plutusDataList(items.map(dataToCardanoClientPlutusData).asJava)
-                .build()
-        case Data.I(i) =>
-            BigIntPlutusData.of(i.bigInteger)
-        case Data.B(b) =>
-            BytesPlutusData.of(b.bytes)
-}
-
 private def makeBondTx(): Unit = {
 
     val chunks = chunksFromInputStream(System.in).toArray
@@ -278,7 +248,7 @@ private def makeBondTx(): Unit = {
       publicKey,
       publicKeyHash
     )
-    val datumData = dataToCardanoClientPlutusData(bondConfig.toData)
+    val datumData = Interop.toPlutusData(bondConfig.toData)
     // val datumData = PlutusData.unit()
     val tx = new Tx()
         .payToContract(scriptAddress, Amount.ada(100), datumData)
@@ -306,7 +276,7 @@ private def findBondUtxo(bondConfig: BondConfig) = {
       System.getenv("BLOCKFROST_API_KEY")
     )
     val utxoSupplier = new DefaultUtxoSupplier(backendService.getUtxoService)
-    val datumData = dataToCardanoClientPlutusData(bondConfig.toData)
+    val datumData = Interop.toPlutusData(bondConfig.toData)
     ScriptUtxoFinders.findFirstByInlineDatum(utxoSupplier, scriptAddress, datumData)
 }
 
@@ -352,7 +322,6 @@ def withdraw(preimage: String, encId: String): Unit = {
 private def spendBond(sender: Account, bondConfig: BondConfig, bondAction: BondAction): Unit = {
     val plutusScript = PlutusV2Script
         .builder()
-        .`type`("PlutusScriptV2")
         .cborHex(bondProgram.doubleCborHex)
         .build();
 
@@ -364,14 +333,23 @@ private def spendBond(sender: Account, bondConfig: BondConfig, bondAction: BondA
       System.getenv("BLOCKFROST_API_KEY")
     )
     val utxoSupplier = new DefaultUtxoSupplier(backendService.getUtxoService)
-    val datumData = dataToCardanoClientPlutusData(bondConfig.toData)
+    val protocolParams = backendService.getEpochService().getProtocolParameters().getValue()
+    val noScriptSupplier = NoScriptSupplier()
+    val scalusEvaluator =
+        new ScalusTransactionEvaluator(
+          protocolParams,
+          utxoSupplier,
+          noScriptSupplier,
+          EvaluatorMode.EVALUATE_AND_COMPUTE_COST
+        )
+    val datumData = Interop.toPlutusData(bondConfig.toData)
     // val datumData = PlutusData.unit()
     val utxo =
         ScriptUtxoFinders.findFirstByInlineDatum(utxoSupplier, scriptAddress, datumData).get
 
     System.err.println(s"found utxo: $utxo")
 
-    val redeemer = dataToCardanoClientPlutusData(bondAction.toData)
+    val redeemer = Interop.toPlutusData(bondAction.toData)
     val scriptTx = new ScriptTx()
         .collectFrom(utxo, redeemer)
         .payToAddress(sender.baseAddress(), utxo.getAmount)
@@ -383,6 +361,7 @@ private def spendBond(sender: Account, bondConfig: BondConfig, bondAction: BondA
         .compose(scriptTx)
         .feePayer(sender.baseAddress())
         .withSigner(SignerProviders.signerFrom(sender))
+        .withTxEvaluator(scalusEvaluator)
         .withRequiredSigners(pubKeyHashBytes)
         .ignoreScriptCostEvaluationError(false)
         .buildAndSign()
