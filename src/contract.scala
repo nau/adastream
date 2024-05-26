@@ -232,14 +232,14 @@ object BondContract {
       */
     inline def makeHtlcContractValidator(
         inline clientPubKeyHash: Data,
-        inline expiration: POSIXTime,
+        inline expiration: PosixTime,
         inline hash: ByteString
     )(datum: Data, redeemer: Data, ctxData: Data): Unit = {
         val validPreimage = hash == sha2_256(unBData(redeemer))
         val expired = {
             val txInfoData = fieldAsData[ScriptContext](_.txInfo)(ctxData)
             val signatoriesData = fieldAsData[TxInfo](_.signatories)(txInfoData)
-            val txtime = fromData[POSIXTimeRange](fieldAsData[TxInfo](_.validRange)(txInfoData))
+            val txtime = fromData[Interval](fieldAsData[TxInfo](_.validRange)(txInfoData))
             txtime.from.boundType match
                 case IntervalBoundType.Finite(txtime) =>
                     val expired = expiration < txtime

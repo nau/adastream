@@ -25,6 +25,7 @@ import java.io.ByteArrayInputStream
 import java.nio.file.Path
 import java.security.SecureRandom
 import scala.collection.immutable.ArraySeq
+import scala.language.implicitConversions
 import scala.util.control.NonFatal
 
 class ContractTests extends munit.ScalaCheckSuite {
