@@ -1,8 +1,9 @@
 //> using scala 3.4.2
 //> using options -deprecation -feature
-//> using plugin org.scalus:scalus-plugin_3:0.6.2-SNAPSHOT
-//> using dep org.scalus:scalus_3:0.6.1+53-302cca97-SNAPSHOT
-//> using dep org.scalus:scalus-bloxbean-cardano-client-lib_3:0.6.1+53-302cca97-SNAPSHOT
+//> using repositories sonatype-s01:snapshots
+//> using plugin org.scalus:scalus-plugin_3:0.7.0
+//> using dep org.scalus:scalus_3:0.7.0
+//> using dep org.scalus:scalus-bloxbean-cardano-client-lib_3:0.7.0
 //> using dep org.slf4j:slf4j-simple:2.0.13
 //> using dep org.bouncycastle:bcprov-jdk18on:1.78.1
 //> using dep net.i2p.crypto:eddsa:0.3.0
