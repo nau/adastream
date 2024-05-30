@@ -1,24 +1,30 @@
 package adastream
 
-import adastream.BondContract.{BondAction, BondConfig}
+import adastream.BondContract.BondAction
+import adastream.BondContract.BondConfig
 import org.bouncycastle.crypto.AsymmetricCipherKeyPair
 import org.bouncycastle.crypto.generators.Ed25519KeyPairGenerator
-import org.bouncycastle.crypto.params.{
-    Ed25519KeyGenerationParameters,
-    Ed25519PrivateKeyParameters,
-    Ed25519PublicKeyParameters
-}
+import org.bouncycastle.crypto.params.Ed25519KeyGenerationParameters
+import org.bouncycastle.crypto.params.Ed25519PrivateKeyParameters
+import org.bouncycastle.crypto.params.Ed25519PublicKeyParameters
+import org.scalacheck.Arbitrary
+import org.scalacheck.Gen
 import org.scalacheck.Prop.*
-import org.scalacheck.{Arbitrary, Gen, Shrink}
+import org.scalacheck.Shrink
+import scalus.builtin.ByteString
 import scalus.builtin.ByteString.StringInterpolators
 import scalus.builtin.Data.toData
+import scalus.builtin.PlatformSpecific
 import scalus.builtin.ToDataInstances.given
-import scalus.builtin.{ByteString, PlatformSpecific, given}
+import scalus.builtin.given
 import scalus.ledger.api.v2.*
 import scalus.ledger.api.v2.ToDataInstances.given
+import scalus.uplc.DeBruijn
+import scalus.uplc.Program
+import scalus.uplc.Term
 import scalus.uplc.TermDSL.{*, given}
+import scalus.uplc.UplcParser
 import scalus.uplc.eval.*
-import scalus.uplc.{DeBruijn, Program, Term, UplcParser}
 import scalus.utils.Utils
 
 import java.io.ByteArrayInputStream
@@ -28,10 +34,12 @@ import scala.collection.immutable.ArraySeq
 import scala.language.implicitConversions
 import scala.util.control.NonFatal
 
+case class CekResult(budget: ExBudget, logs: Seq[String])
+
 class ContractTests extends munit.ScalaCheckSuite {
     // generate ed25519 keys
     val RANDOM = new SecureRandom();
-    val ps: PlatformSpecific = summon[PlatformSpecific]
+    val crypto = summon[PlatformSpecific]
     val keyPairGenerator = new Ed25519KeyPairGenerator();
     keyPairGenerator.init(new Ed25519KeyGenerationParameters(RANDOM));
     val asymmetricCipherKeyPair: AsymmetricCipherKeyPair = keyPairGenerator.generateKeyPair();
@@ -42,15 +50,15 @@ class ContractTests extends munit.ScalaCheckSuite {
     val publicKey: ByteString = ByteString.fromArray(publicKeyParams.getEncoded)
     val preimage: ByteString =
         ByteString.fromHex("a64cf172224cab7a1b1da28e14719a810b5de126141d066892dada6b6b6e7ccd")
-    val preimageHash: ByteString = ByteString.unsafeFromArray(Utils.sha2_256(preimage.bytes))
-    val encryptedChunk: ByteString = ByteString.fromArray(Utils.sha2_256("encryptedChunk".getBytes))
-    val chunkHash: ByteString = ByteString.fromArray(Utils.sha2_256("chunkHash".getBytes))
+    val preimageHash: ByteString = crypto.sha2_256(preimage)
+    val encryptedChunk: ByteString = crypto.sha2_256(ByteString.fromString("encryptedChunk"))
+    val chunkHash: ByteString = crypto.sha2_256(ByteString.fromString("chunkHash"))
     val encId: ByteString = MerkleTree.fromHashes(ArraySeq(encryptedChunk, chunkHash)).getMerkleRoot
     val bondConfig: BondConfig = BondConfig(
       preimageHash,
       encId,
       publicKey,
-      ps.blake2b_224(publicKey)
+      crypto.blake2b_224(publicKey)
     )
 
     test(s"bondProgram size is ${bondProgram.doubleCborEncoded.length}") {
@@ -64,21 +72,23 @@ class ContractTests extends munit.ScalaCheckSuite {
           withdraw,
           scalus.prelude.List(PubKeyHash(bondConfig.serverPubKeyHash))
         ) {
-            case UplcEvalResult.Success(term, budget, logs) =>
+            case Right(CekResult(budget, logs)) =>
                 assert(0 < budget.cpu && budget.cpu < 14_000000L)
                 assert(0 < budget.memory && budget.memory < 50000L)
-            case UplcEvalResult.UplcFailure(errorCode, error) =>
-                fail(s"UplcFailure: $errorCode, $error")
+            case Left((e, res)) =>
+                fail(s"Consumed ${showBudget(res.budget)}\nLogs: ${res.logs.mkString("\n")}", e)
         }
     }
 
-    test("Server can't withdraw without a signature") {
+    val newValue = {
         val withdraw = BondAction.Withdraw(preimage)
         evalBondValidator(bondConfig, withdraw, scalus.prelude.List.empty) {
-            case UplcEvalResult.Success(term, _, _)           => fail(s"should fail")
-            case UplcEvalResult.UplcFailure(errorCode, error) =>
+            case Right(_)                   => fail(s"should fail")
+            case Left((_: BuiltinError, _)) =>
+            case Left((e, r))               => fail(s"Unexpected error with $r", e)
         }
     }
+    test("Server can't withdraw without a signature")(newValue)
 
     test("Server can't withdraw with a wrong signature") {
         val withdraw = BondAction.Withdraw(preimage)
@@ -87,8 +97,9 @@ class ContractTests extends munit.ScalaCheckSuite {
           withdraw,
           scalus.prelude.List(PubKeyHash(ByteString.fromString("wrong")))
         ) {
-            case UplcEvalResult.Success(term, _, _)           => fail(s"should fail")
-            case UplcEvalResult.UplcFailure(errorCode, error) =>
+            case Right(_)                        => fail(s"should fail")
+            case Left((_: EvaluationFailure, _)) =>
+            case Left((e, r))                    => fail(s"Unexpected error with $r", e)
         }
     }
 
@@ -99,9 +110,9 @@ class ContractTests extends munit.ScalaCheckSuite {
           withdraw,
           scalus.prelude.List(PubKeyHash(bondConfig.serverPubKeyHash))
         ) {
-            case UplcEvalResult.Success(term, _, logs) =>
-                fail(s"should fail but got result $term with logs $logs")
-            case UplcEvalResult.UplcFailure(errorCode, error) =>
+            case Right(_)                        => fail(s"should fail")
+            case Left((_: EvaluationFailure, _)) =>
+            case Left((e, r))                    => fail(s"Unexpected error with $r", e)
         }
     }
 
@@ -142,7 +153,7 @@ class ContractTests extends munit.ScalaCheckSuite {
               preimageHash,
               encId,
               publicKey,
-              ps.blake2b_224(publicKey)
+              crypto.blake2b_224(publicKey)
             )
             val claim = bondConfig.encryptedId ++ bondConfig.passwordHash
             val signature = Encryption.signMessage(claim, privateKey)
@@ -160,28 +171,18 @@ class ContractTests extends munit.ScalaCheckSuite {
                 )
 
             evalBondValidator(bondConfig, action, scalus.prelude.List.empty) {
-                case UplcEvalResult.Success(term, budget, _) =>
+                case Right(CekResult(budget, _)) =>
                     assert(budget.cpu < 2_000_000000L)
                     assert(budget.memory < 3_000000L)
                     true
-                case UplcEvalResult.UplcFailure(errorCode, error) =>
-                    fail(s"errorCode: $errorCode, error: $error")
+                case Left((e, r)) =>
+                    fail(r.toString, e)
                     false
             }
         }
     }
 
-    def evalBondValidator[A](
-        bondConfig: BondConfig,
-        withdraw: BondAction,
-        signatures: scalus.prelude.List[PubKeyHash]
-    )(pf: PartialFunction[UplcEvalResult, A]): A = {
-        val scriptContext = makeScriptContext(signatures)
-        val term =
-            bondValidator $ bondConfig.toData $ withdraw.toData $ makeScriptContext(
-              signatures
-            ).toData
-        val result = PlutusUplcEval.evalFlat(Program((1, 0, 0), term))
+    def evalTerm(term: Term): Either[(Throwable, CekResult), CekResult] =
         val tallyingBudgetSpender = TallyingBudgetSpender(CountingBudgetSpender())
         val logger = Log()
         val cekMachine = CekMachine(
@@ -191,29 +192,39 @@ class ContractTests extends munit.ScalaCheckSuite {
           summon[PlatformSpecific]
         )
         val debruijnedTerm = DeBruijn.deBruijnTerm(term)
-        try cekMachine.evaluateTerm(debruijnedTerm)
-        catch case NonFatal(e) => ()
-        val r = tallyingBudgetSpender.budgetSpender.getSpentBudget
-        def showBudget(budget: ExBudget): String =
-            s"%.6f / %.6f".format(budget.cpu / 1000000d, budget.memory / 1000000d)
-        result match
-            case UplcEvalResult.TermParsingError(error)  => fail(s"TermParsingError: $error")
-            case UplcEvalResult.Success(_, budget, logs) =>
-//                println(logs)
-//                println(s"budget: ${showBudget(budget)}, scalus budget: ${showBudget(r)}")
-//                if budget != r then
-//                    println(s"diff: ${budget.cpu - r.cpu}, ${budget.memory - r.memory}")
-                /*println(
-                  s"Execution stats:\n${tallyingBudgetSpender.costs.toArray
-                          .sortBy(_._1.toString())
-                          .map { case (k, v) =>
-                              s"$k: ${showBudget(v)}"
-                          }
-                          .mkString("\n")}"
-                )*/
-                pf(result)
-            case other => pf(other)
+        try
+            cekMachine.evaluateTerm(debruijnedTerm)
+            val budget = tallyingBudgetSpender.budgetSpender.getSpentBudget
+            Right(CekResult(budget, logger.getLogs.toSeq))
+        catch
+            case NonFatal(e) =>
+                val budget = tallyingBudgetSpender.budgetSpender.getSpentBudget
+                Left((e, CekResult(budget, logger.getLogs.toSeq)))
+
+    def evalBondValidator[A](
+        bondConfig: BondConfig,
+        withdraw: BondAction,
+        signatures: scalus.prelude.List[PubKeyHash]
+    )(pf: PartialFunction[Either[(Throwable, CekResult), CekResult], A]): A = {
+        val scriptContext = makeScriptContext(signatures)
+        val term =
+            bondValidator $ bondConfig.toData $ withdraw.toData $ makeScriptContext(
+              signatures
+            ).toData
+        val result = evalTerm(term)
+        pf(result)
     }
+
+    private def showBudget(budget: ExBudget): String =
+        s"%.6f / %.6f".format(budget.cpu / 1000000d, budget.memory / 1000000d)
+
+    private def showTallyingBudgetSpender(tallyingBudgetSpender: TallyingBudgetSpender): String =
+        tallyingBudgetSpender.costs.toArray
+            .sortBy(_._1.toString())
+            .map { case (k, v) =>
+                s"$k: ${showBudget(v)}"
+            }
+            .mkString("\n")
 
     test("calculateFileIdAndEncId") {
         val (fileId, encId) =
@@ -230,13 +241,12 @@ class ContractTests extends munit.ScalaCheckSuite {
 
     test("xorBytes performance") {
         val term = xorBytesScript $ BigInt(1) $ BigInt(2)
-        val result = PlutusUplcEval.evalFlat(Program((1, 0, 0), term))
+        val result = evalTerm(term)
         result match
-            case UplcEvalResult.Success(term, budget, logs) =>
-                assertEquals(budget.cpu, 31_043509L)
-                assertEquals(budget.memory, 55706L)
-            case UplcEvalResult.TermParsingError(error)       => fail(s"TermParsingError: $error")
-            case UplcEvalResult.UplcFailure(errorCode, error) => fail(s"error: $error")
+            case Right(r) =>
+                assertEquals(r.budget.cpu, 31_043509L)
+                assertEquals(r.budget.memory, 55706L)
+            case Left((e, r)) => fail(s"Consumed ${showBudget(r.budget)}", e)
     }
 
     property("BondContract.xorBytes is the same as BigInt.xor") {
@@ -326,33 +336,3 @@ class ContractTests extends munit.ScalaCheckSuite {
           )
         )
 }
-
-enum UplcEvalResult:
-    case Success(term: Term, budget: ExBudget, logs: String = "")
-    case UplcFailure(errorCode: Int, error: String)
-    case TermParsingError(error: String)
-
-object PlutusUplcEval:
-    def evalFlat(program: Program): UplcEvalResult =
-        import cats.implicits.toShow
-        val flat = program.flatEncoded
-        // println(s"Flat size: ${flat.length}}")
-        import scala.sys.process.*
-        val cmd =
-            "uplc evaluate --input-format flat --trace-mode LogsWithBudgets -c --print-mode Debug"
-        var out = ""
-        val retCode = cmd.#<(new ByteArrayInputStream(flat)).!(ProcessLogger(o => out += o + "\n"))
-        if retCode == 0 then
-            UplcParser.term.parse(out) match
-                case Right(remaining, term) =>
-                    val budget = raw"(?s)CPU budget:\s+(\d+)\RMemory budget:\s+(\d+)\R(.+)".r
-                    remaining match
-                        case budget(cpu, memory, logs) =>
-                            UplcEvalResult.Success(
-                              term,
-                              ExBudget.fromCpuAndMemory(cpu.toLong, memory.toLong),
-                              logs
-                            )
-                        case _ => UplcEvalResult.Success(term, ExBudget.zero, remaining)
-                case Left(err) => UplcEvalResult.TermParsingError(err.show)
-        else UplcEvalResult.UplcFailure(retCode, out)

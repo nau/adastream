@@ -1,6 +1,5 @@
 //> using scala 3.4.2
 //> using options -deprecation -feature
-//> using repositories sonatype-s01:snapshots
 //> using plugin org.scalus:scalus-plugin_3:0.7.0
 //> using dep org.scalus:scalus_3:0.7.0
 //> using dep org.scalus:scalus-bloxbean-cardano-client-lib_3:0.7.0
