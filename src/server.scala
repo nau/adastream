@@ -4,7 +4,7 @@ import adastream.Encryption.chunksFromInputStream
 import scalus.builtin.Builtins.sha2_256
 import scalus.builtin.{ByteString, given}
 import sttp.tapir.*
-import sttp.tapir.server.netty.sync.{Id, NettySyncServer}
+import sttp.tapir.server.netty.sync.{NettySyncServer}
 import sttp.tapir.swagger.bundle.SwaggerInterpreter
 import sttp.tapir.files.*
 
@@ -34,25 +34,26 @@ class Server(
             .in("upload")
             .in(inputStreamBody)
             .out(stringJsonBody)
-            .serverLogicSuccess[Id](uploadFile)
+            .handleSuccess(uploadFile)
 
     val download =
         endpoint.get
             .in("download" / path[String]("fileId"))
             .out(fileBody)
             .errorOut(stringBody.map[Throwable](sys.error)(_.getMessage))
-            .serverLogic[Id](downloadFile)
+            .handle(downloadFile)
 
     val stream =
         endpoint.get
             .in("stream" / path[String]("fileId"))
             .in(query[String]("secret"))
             .out(inputStreamBody)
-            .serverLogicSuccess[Id](streamFile)
+            .handleSuccess(streamFile)
 
     val apiEndpoints = List(upload, download, stream)
     val swaggerEndpoints =
-        SwaggerInterpreter().fromEndpoints[Id](apiEndpoints.map(_.endpoint), "AdaStream", "0.1")
+        SwaggerInterpreter()
+            .fromEndpoints[[X] =>> X](apiEndpoints.map(_.endpoint), "AdaStream", "0.1")
 
     def uploadFile(stream: InputStream): String =
         // write stream to file
@@ -97,13 +98,13 @@ class Server(
         println(json)
         json
 
-    def downloadFile(fileId: String): Id[Either[Throwable, File]] =
+    def downloadFile(fileId: String): Either[Throwable, File] =
         Try {
             val path = filesDirectory.resolve(fileId)
             path.toFile
         }.toEither
 
-    def streamFile(input: (String, String)): Id[InputStream] =
+    def streamFile(input: (String, String)): InputStream =
         val (fileId, secret) = input
         val path = filesDirectory.resolve(fileId)
         val is = Files.newInputStream(path)
