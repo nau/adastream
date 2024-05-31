@@ -1,11 +1,29 @@
 package adastream
 
+import adastream.BondContract.BondAction
+import adastream.BondContract.BondConfig
+import com.bloxbean.cardano.client.account.Account
+import com.bloxbean.cardano.client.address.AddressProvider
+import com.bloxbean.cardano.client.backend.api.DefaultUtxoSupplier
+import com.bloxbean.cardano.client.backend.blockfrost.common.Constants
+import com.bloxbean.cardano.client.backend.blockfrost.service.BFBackendService
+import com.bloxbean.cardano.client.common.model.Networks
+import com.bloxbean.cardano.client.function.helper.ScriptUtxoFinders
+import com.bloxbean.cardano.client.function.helper.SignerProviders
+import com.bloxbean.cardano.client.plutus.spec.PlutusV2Script
+import com.bloxbean.cardano.client.quicktx.QuickTxBuilder
+import com.bloxbean.cardano.client.quicktx.ScriptTx
 import org.bouncycastle.crypto.digests.SHA256Digest
 import org.bouncycastle.crypto.params.Ed25519PrivateKeyParameters
 import org.bouncycastle.crypto.signers.Ed25519Signer
 import scalus.*
+import scalus.bloxbean.Interop
+import scalus.bloxbean.ScalusTransactionEvaluator
 import scalus.builtin.Builtins.*
-import scalus.builtin.{ByteString, Data, given}
+import scalus.builtin.ByteString
+import scalus.builtin.Data
+import scalus.builtin.Data.toData
+import scalus.builtin.given
 import scalus.utils.Utils
 
 import java.io.InputStream
@@ -13,6 +31,7 @@ import java.nio.file.Path
 import scala.annotation.tailrec
 import scala.collection.immutable.ArraySeq
 import scala.collection.mutable.ArrayBuffer
+import com.bloxbean.cardano.client.api.model.Utxo
 
 /** Rolling Merkle tree implementation
   */
@@ -210,3 +229,27 @@ object Encryption {
         signer.update(claim.bytes, 0, claim.length)
         ByteString.fromArray(signer.generateSignature())
 }
+
+class Tx {
+    val plutusScript = PlutusV2Script
+        .builder()
+        .cborHex(bondProgram.doubleCborHex)
+        .build();
+
+    def makeSpendBondScriptTx(
+        sender: Account,
+        utxo: Utxo,
+        bondAction: BondAction
+    ): ScriptTx = {
+        val redeemer = Interop.toPlutusData(bondAction.toData)
+        val scriptTx = new ScriptTx()
+            .collectFrom(utxo, redeemer)
+            .payToAddress(sender.baseAddress(), utxo.getAmount)
+            .attachSpendingValidator(plutusScript)
+        scriptTx
+    }
+}
+
+class TxService(
+
+)

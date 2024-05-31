@@ -19,6 +19,7 @@ import scalus.builtin.ToDataInstances.given
 import scalus.builtin.given
 import scalus.ledger.api.v2.*
 import scalus.ledger.api.v2.ToDataInstances.given
+import scalus.prelude
 import scalus.uplc.DeBruijn
 import scalus.uplc.Program
 import scalus.uplc.Term
@@ -33,6 +34,12 @@ import java.security.SecureRandom
 import scala.collection.immutable.ArraySeq
 import scala.language.implicitConversions
 import scala.util.control.NonFatal
+import com.bloxbean.cardano.client.quicktx.QuickTxBuilder
+import com.bloxbean.cardano.client.quicktx.ScriptTx
+import com.bloxbean.cardano.client.transaction.spec.Transaction
+import com.bloxbean.cardano.client.backend.blockfrost.service.http.TransactionApi
+import com.bloxbean.cardano.client.function.TxBuilder
+import scalus.bloxbean.Interop
 
 case class CekResult(budget: ExBudget, logs: Seq[String])
 
@@ -70,7 +77,7 @@ class ContractTests extends munit.ScalaCheckSuite {
         evalBondValidator(
           bondConfig,
           withdraw,
-          scalus.prelude.List(PubKeyHash(bondConfig.serverPubKeyHash))
+          Seq(PubKeyHash(bondConfig.serverPubKeyHash))
         ) {
             case Right(CekResult(budget, logs)) =>
                 assert(0 < budget.cpu && budget.cpu < 14_000000L)
@@ -82,7 +89,7 @@ class ContractTests extends munit.ScalaCheckSuite {
 
     val newValue = {
         val withdraw = BondAction.Withdraw(preimage)
-        evalBondValidator(bondConfig, withdraw, scalus.prelude.List.empty) {
+        evalBondValidator(bondConfig, withdraw, Seq.empty) {
             case Right(_)                   => fail(s"should fail")
             case Left((_: BuiltinError, _)) =>
             case Left((e, r))               => fail(s"Unexpected error with $r", e)
@@ -95,7 +102,7 @@ class ContractTests extends munit.ScalaCheckSuite {
         evalBondValidator(
           bondConfig,
           withdraw,
-          scalus.prelude.List(PubKeyHash(ByteString.fromString("wrong")))
+          Seq(PubKeyHash(ByteString.fromString("wrong")))
         ) {
             case Right(_)                        => fail(s"should fail")
             case Left((_: EvaluationFailure, _)) =>
@@ -108,7 +115,7 @@ class ContractTests extends munit.ScalaCheckSuite {
         evalBondValidator(
           bondConfig,
           withdraw,
-          scalus.prelude.List(PubKeyHash(bondConfig.serverPubKeyHash))
+          Seq(PubKeyHash(bondConfig.serverPubKeyHash))
         ) {
             case Right(_)                        => fail(s"should fail")
             case Left((_: EvaluationFailure, _)) =>
@@ -170,7 +177,7 @@ class ContractTests extends munit.ScalaCheckSuite {
                   merkleProof = merkleProof
                 )
 
-            evalBondValidator(bondConfig, action, scalus.prelude.List.empty) {
+            evalBondValidator(bondConfig, action, Seq.empty) {
                 case Right(CekResult(budget, _)) =>
                     assert(budget.cpu < 2_000_000000L)
                     assert(budget.memory < 3_000000L)
@@ -204,13 +211,10 @@ class ContractTests extends munit.ScalaCheckSuite {
     def evalBondValidator[A](
         bondConfig: BondConfig,
         withdraw: BondAction,
-        signatures: scalus.prelude.List[PubKeyHash]
+        signatures: Seq[PubKeyHash]
     )(pf: PartialFunction[Either[(Throwable, CekResult), CekResult], A]): A = {
         val scriptContext = makeScriptContext(signatures)
-        val term =
-            bondValidator $ bondConfig.toData $ withdraw.toData $ makeScriptContext(
-              signatures
-            ).toData
+        val term = bondValidator $ bondConfig.toData $ withdraw.toData $ scriptContext.toData
         val result = evalTerm(term)
         pf(result)
     }
@@ -312,7 +316,7 @@ class ContractTests extends munit.ScalaCheckSuite {
         }
     }
 
-    def makeScriptContext(signatories: scalus.prelude.List[PubKeyHash]): ScriptContext =
+    def makeScriptContext(signatories: Seq[PubKeyHash]): ScriptContext =
         ScriptContext(
           TxInfo(
             inputs = scalus.prelude.List.Nil,
@@ -323,7 +327,7 @@ class ContractTests extends munit.ScalaCheckSuite {
             dcert = scalus.prelude.List.Nil,
             withdrawals = scalus.prelude.AssocMap.empty,
             validRange = Interval.always,
-            signatories = signatories,
+            signatories = scalus.prelude.List(signatories*),
             redeemers = scalus.prelude.AssocMap.empty,
             data = scalus.prelude.AssocMap.empty,
             id = TxId(hex"1e0612fbd127baddfcd555706de96b46c4d4363ac78c73ab4dee6e6a7bf61fe9")

@@ -30,6 +30,16 @@ import scalus.bloxbean.ScalusTransactionEvaluator
 import scalus.bloxbean.ScriptSupplier
 import scalus.bloxbean.NoScriptSupplier
 import scalus.bloxbean.EvaluatorMode
+import com.bloxbean.cardano.client.common.model.Network
+
+case class Sender(
+    network: Network,
+    sender: Account
+) {
+    lazy val privateKey = ByteString.fromArray(sender.privateKeyBytes)
+    lazy val publicKey = ByteString.fromArray(sender.publicKeyBytes)
+    lazy val publicKeyHash = ByteString.fromArray(sender.hdKeyPair.getPublicKey.getKeyHash)
+}
 
 private val ps: PlatformSpecific = summon[PlatformSpecific]
 private val compiledBondScript = compile(BondContract.bondContractValidator)
@@ -40,10 +50,7 @@ val xorBytesScript: Term = compile(BondContract.xorBytes).toUplc(generateErrorTr
 private val htlcValidator = compiledHtlcScript.toUplc(generateErrorTraces = true)
 private val htlcProgram = Program((1, 0, 0), htlcValidator)
 
-lazy val sender = new Account(Networks.preview(), System.getenv("MNEMONIC"))
-lazy val privateKey = ByteString.fromArray(sender.privateKeyBytes)
-lazy val publicKey = ByteString.fromArray(sender.publicKeyBytes)
-lazy val publicKeyHash = ByteString.fromArray(sender.hdKeyPair.getPublicKey.getKeyHash)
+lazy val sender = Sender(Networks.preview(), new Account(Networks.preview(), System.getenv("MNEMONIC")))
 
 private def publish(): Unit = {
     val is = System.in
@@ -245,18 +252,18 @@ private def makeBondTx(): Unit = {
     val bondConfig = BondContract.BondConfig(
       paymentHash,
       encId,
-      publicKey,
-      publicKeyHash
+      sender.publicKey,
+      sender.publicKeyHash
     )
     val datumData = Interop.toPlutusData(bondConfig.toData)
     // val datumData = PlutusData.unit()
     val tx = new Tx()
         .payToContract(scriptAddress, Amount.ada(100), datumData)
-        .from(sender.getBaseAddress.getAddress)
+        .from(sender.sender.getBaseAddress.getAddress)
 
     val result = quickTxBuilder
         .compose(tx)
-        .withSigner(SignerProviders.signerFrom(sender))
+        .withSigner(SignerProviders.signerFrom(sender.sender))
         .complete()
     println(result)
 }
@@ -293,8 +300,8 @@ private def spendBondWithFraudProof(
     val bondConfig = BondContract.BondConfig(
       paymentHash,
       ByteString.fromHex(encId),
-      publicKey,
-      publicKeyHash
+      sender.publicKey,
+      sender.publicKeyHash
     )
     System.err.println(s"bondConfig: $bondConfig")
     val fraudProof = BondAction.FraudProof(
@@ -305,7 +312,7 @@ private def spendBondWithFraudProof(
       chunkIndex = chunkIndex,
       merkleProof = Data.List(merkleProof.map(bData).toList)
     )
-    spendBond(sender, bondConfig, fraudProof)
+    spendBond(sender.sender, bondConfig, fraudProof)
 }
 
 def withdraw(preimage: String, encId: String): Unit = {
@@ -313,10 +320,10 @@ def withdraw(preimage: String, encId: String): Unit = {
     val bondConfig = BondContract.BondConfig(
       paymentHash,
       ByteString.fromHex(encId),
-      publicKey,
-      publicKeyHash
+      sender.publicKey,
+      sender.publicKeyHash
     )
-    spendBond(sender, bondConfig, BondAction.Withdraw(ByteString.fromHex(preimage)))
+    spendBond(sender.sender, bondConfig, BondAction.Withdraw(ByteString.fromHex(preimage)))
 }
 
 private def spendBond(sender: Account, bondConfig: BondConfig, bondAction: BondAction): Unit = {
@@ -334,14 +341,7 @@ private def spendBond(sender: Account, bondConfig: BondConfig, bondAction: BondA
     )
     val utxoSupplier = new DefaultUtxoSupplier(backendService.getUtxoService)
     val protocolParams = backendService.getEpochService().getProtocolParameters().getValue()
-    val noScriptSupplier = NoScriptSupplier()
-    val scalusEvaluator =
-        new ScalusTransactionEvaluator(
-          protocolParams,
-          utxoSupplier,
-          noScriptSupplier,
-          EvaluatorMode.EVALUATE_AND_COMPUTE_COST
-        )
+    val scalusEvaluator = new ScalusTransactionEvaluator(protocolParams, utxoSupplier)
     val datumData = Interop.toPlutusData(bondConfig.toData)
     // val datumData = PlutusData.unit()
     val utxo =
@@ -354,7 +354,6 @@ private def spendBond(sender: Account, bondConfig: BondConfig, bondAction: BondA
         .collectFrom(utxo, redeemer)
         .payToAddress(sender.baseAddress(), utxo.getAmount)
         .attachSpendingValidator(plutusScript)
-
     val pubKeyHashBytes = sender.hdKeyPair().getPublicKey.getKeyHash
     val quickTxBuilder = new QuickTxBuilder(backendService)
     val tx = quickTxBuilder
@@ -371,8 +370,8 @@ private def spendBond(sender: Account, bondConfig: BondConfig, bondAction: BondA
 }
 
 private def showKeys(): Unit = {
-    println(s"private key: ${privateKey.toHex}")
-    println(s"public key: ${publicKey.toHex}")
+    println(s"private key: ${sender.privateKey.toHex}")
+    println(s"public key: ${sender.publicKey.toHex}")
 }
 
 private def server(secret: String, uploadDir: Path): Unit = {
