@@ -83,12 +83,6 @@ class ContractTests extends munit.ScalaCheckSuite {
       publicKey,
       crypto.blake2b_224(publicKey)
     )
-    val plutusScript = PlutusV2Script
-        .builder()
-        .`type`("PlutusScriptV2")
-        .cborHex(bondProgram.doubleCborHex)
-        .build()
-        .asInstanceOf[PlutusV2Script]
 
     test(s"bondProgram size is ${bondProgram.doubleCborEncoded.length}") {
         assert(bondProgram.doubleCborEncoded.length == 1063)
@@ -389,7 +383,7 @@ class ContractTests extends munit.ScalaCheckSuite {
             .witnessSet(
               TransactionWitnessSet
                   .builder()
-                  .plutusV2Scripts(util.List.of(plutusScript))
+                  .plutusV2Scripts(util.List.of(ctx.bondPlutusScript))
                   .redeemers(util.List.of(rdmr))
                   .build()
             )

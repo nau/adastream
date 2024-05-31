@@ -31,6 +31,7 @@ import scalus.bloxbean.ScriptSupplier
 import scalus.bloxbean.NoScriptSupplier
 import scalus.bloxbean.EvaluatorMode
 import com.bloxbean.cardano.client.common.model.Network
+import com.bloxbean.cardano.client.backend.api.BackendService
 
 case class Sender(account: Account) {
     lazy val privateKey = ByteString.fromArray(account.privateKeyBytes)
@@ -40,9 +41,33 @@ case class Sender(account: Account) {
 
 class AppCtx(
     network: Network,
-    mnemonic: String
+    mnemonic: String,
+    blockfrostApiKey: String | Null = System.getenv("BLOCKFROST_API_KEY")
 ) {
     lazy val sender = Sender(new Account(network, mnemonic))
+    lazy val bondPlutusScript = PlutusV2Script
+        .builder()
+        .`type`("PlutusScriptV2")
+        .cborHex(bondProgram.doubleCborHex)
+        .build()
+        .asInstanceOf[PlutusV2Script]
+    lazy val scriptAddress =
+        AddressProvider.getEntAddress(bondPlutusScript, network).toBech32()
+
+    lazy val hdKeyPair = new CIP1852().getKeyPairFromMnemonic(
+      mnemonic,
+      DerivationPath.createExternalAddressDerivationPath(0)
+    )
+
+    lazy val backendService: BackendService =
+        val url =
+            if network == Networks.mainnet() then Constants.BLOCKFROST_MAINNET_URL
+            else if network == Networks.preview() then Constants.BLOCKFROST_PREVIEW_URL
+            else sys.error(s"Unsupported network: $network")
+        Option(blockfrostApiKey)
+            .map(new BFBackendService(url, _))
+            .getOrElse(sys.error("BLOCKFROST_API_KEY environment variable is not set"))
+
 }
 
 val ps: PlatformSpecific = summon[PlatformSpecific]
@@ -95,14 +120,8 @@ private def encrypt(secret: String, encryptIncorrectly: Boolean): Unit = {
     val encId = MerkleTree.fromHashes(encHashes.result()).getMerkleRoot
     val claim = encId ++ preimageHash
     val signingProvider = CryptoConfiguration.INSTANCE.getSigningProvider
-    val mnemonic = System.getenv("MNEMONIC")
-
-    val hdKeyPair = new CIP1852().getKeyPairFromMnemonic(
-      mnemonic,
-      DerivationPath.createExternalAddressDerivationPath(0)
-    )
     val signature =
-        signingProvider.signExtended(claim.bytes, hdKeyPair.getPrivateKey.getKeyData)
+        signingProvider.signExtended(claim.bytes, ctx.hdKeyPair.getPrivateKey.getKeyData)
     val fileOut = System.out
     fileOut.write(signature)
     fileOut.write(preimageHash.bytes)
@@ -111,8 +130,8 @@ private def encrypt(secret: String, encryptIncorrectly: Boolean): Unit = {
         fileOut.write(hash.bytes)
     System.err.println(s"preimage: ${Utils.bytesToHex(preimage)}")
     System.err.println(s"preimageHash: ${preimageHash.toHex}")
-    System.err.println(s"pubKey: ${hdKeyPair.getPublicKey.getKeyData.toHex}")
-    System.err.println(s"pubKeyHash: ${hdKeyPair.getPublicKey.getKeyHash.toHex}")
+    System.err.println(s"pubKey: ${ctx.hdKeyPair.getPublicKey.getKeyData.toHex}")
+    System.err.println(s"pubKeyHash: ${ctx.hdKeyPair.getPublicKey.getKeyHash.toHex}")
     System.err.println(s"signature: ${signature.toHex}")
     System.err.println(s"fileId: ${fileId.toHex}")
     System.err.println(s"encId: ${encId.toHex}")
@@ -218,17 +237,9 @@ private def verify(publicKeyHex: String): Unit = {
       publicKey,
       ps.blake2b_224(publicKey)
     )
-    val plutusScript = PlutusV2Script
-        .builder()
-        .`type`("PlutusScriptV2")
-        .cborHex(bondProgram.doubleCborHex)
-        .build();
-
-    val scriptAddress =
-        AddressProvider.getEntAddress(plutusScript, Networks.preview()).toBech32()
     val result = findBondUtxo(bondConfig)
     System.err.println(
-      s"Looking up for bond UTxO with address ${scriptAddress} and bondConfig: $bondConfig"
+      s"Looking up for bond UTxO with address ${ctx.scriptAddress} and bondConfig: $bondConfig"
     )
     if result.isPresent
     then System.err.println(s"Found bond utxo: ${result.get()}")
@@ -243,21 +254,10 @@ private def makeBondTx(): Unit = {
     val signature = chunks(0) ++ chunks(1) // 64 bytes, 2 chunks
     val paymentHash = ByteString.fromArray(chunks(2)) // 32 bytes, 1 chunk
     val encId = merkleTreeFromIterator(chunks.iterator.drop(3)).getMerkleRoot
-    val plutusScript = PlutusV2Script
-        .builder()
-        .`type`("PlutusScriptV2")
-        .cborHex(bondProgram.doubleCborHex)
-        .build();
-    val scriptAddress =
-        AddressProvider.getEntAddress(plutusScript, Networks.preview()).toBech32();
 
-    System.err.println(s"bond contract address: $scriptAddress")
+    System.err.println(s"bond contract address: ${ctx.scriptAddress}")
 
-    val backendService = new BFBackendService(
-      Constants.BLOCKFROST_PREVIEW_URL,
-      System.getenv("BLOCKFROST_API_KEY")
-    )
-    val quickTxBuilder = new QuickTxBuilder(backendService)
+    val quickTxBuilder = new QuickTxBuilder(ctx.backendService)
     val bondConfig = BondContract.BondConfig(
       paymentHash,
       encId,
@@ -267,7 +267,7 @@ private def makeBondTx(): Unit = {
     val datumData = Interop.toPlutusData(bondConfig.toData)
     // val datumData = PlutusData.unit()
     val tx = new Tx()
-        .payToContract(scriptAddress, Amount.ada(100), datumData)
+        .payToContract(ctx.scriptAddress, Amount.ada(100), datumData)
         .from(ctx.sender.account.getBaseAddress.getAddress)
 
     val result = quickTxBuilder
@@ -278,22 +278,9 @@ private def makeBondTx(): Unit = {
 }
 
 private def findBondUtxo(bondConfig: BondConfig) = {
-    val plutusScript = PlutusV2Script
-        .builder()
-        .`type`("PlutusScriptV2")
-        .cborHex(bondProgram.doubleCborHex)
-        .build();
-
-    val scriptAddress =
-        AddressProvider.getEntAddress(plutusScript, Networks.preview()).toBech32()
-
-    val backendService = new BFBackendService(
-      Constants.BLOCKFROST_PREVIEW_URL,
-      System.getenv("BLOCKFROST_API_KEY")
-    )
-    val utxoSupplier = new DefaultUtxoSupplier(backendService.getUtxoService)
+    val utxoSupplier = new DefaultUtxoSupplier(ctx.backendService.getUtxoService)
     val datumData = Interop.toPlutusData(bondConfig.toData)
-    ScriptUtxoFinders.findFirstByInlineDatum(utxoSupplier, scriptAddress, datumData)
+    ScriptUtxoFinders.findFirstByInlineDatum(utxoSupplier, ctx.scriptAddress, datumData)
 }
 
 private def spendBondWithFraudProof(
@@ -336,25 +323,13 @@ def withdraw(preimage: String, encId: String): Unit = {
 }
 
 private def spendBond(sender: Account, bondConfig: BondConfig, bondAction: BondAction): Unit = {
-    val plutusScript = PlutusV2Script
-        .builder()
-        .cborHex(bondProgram.doubleCborHex)
-        .build();
-
-    val scriptAddress =
-        AddressProvider.getEntAddress(plutusScript, Networks.preview()).toBech32()
-
-    val backendService = new BFBackendService(
-      Constants.BLOCKFROST_PREVIEW_URL,
-      System.getenv("BLOCKFROST_API_KEY")
-    )
-    val utxoSupplier = new DefaultUtxoSupplier(backendService.getUtxoService)
-    val protocolParams = backendService.getEpochService().getProtocolParameters().getValue()
+    val utxoSupplier = new DefaultUtxoSupplier(ctx.backendService.getUtxoService)
+    val protocolParams = ctx.backendService.getEpochService().getProtocolParameters().getValue()
     val scalusEvaluator = new ScalusTransactionEvaluator(protocolParams, utxoSupplier)
     val datumData = Interop.toPlutusData(bondConfig.toData)
     // val datumData = PlutusData.unit()
     val utxo =
-        ScriptUtxoFinders.findFirstByInlineDatum(utxoSupplier, scriptAddress, datumData).get
+        ScriptUtxoFinders.findFirstByInlineDatum(utxoSupplier, ctx.scriptAddress, datumData).get
 
     System.err.println(s"found utxo: $utxo")
 
@@ -362,9 +337,9 @@ private def spendBond(sender: Account, bondConfig: BondConfig, bondAction: BondA
     val scriptTx = new ScriptTx()
         .collectFrom(utxo, redeemer)
         .payToAddress(sender.baseAddress(), utxo.getAmount)
-        .attachSpendingValidator(plutusScript)
+        .attachSpendingValidator(ctx.bondPlutusScript)
     val pubKeyHashBytes = sender.hdKeyPair().getPublicKey.getKeyHash
-    val quickTxBuilder = new QuickTxBuilder(backendService)
+    val quickTxBuilder = new QuickTxBuilder(ctx.backendService)
     val tx = quickTxBuilder
         .compose(scriptTx)
         .feePayer(sender.baseAddress())
@@ -374,7 +349,7 @@ private def spendBond(sender: Account, bondConfig: BondConfig, bondAction: BondA
         .ignoreScriptCostEvaluationError(false)
         .buildAndSign()
     System.err.println(tx.toJson)
-    val result = backendService.getTransactionService.submitTransaction(tx.serialize())
+    val result = ctx.backendService.getTransactionService.submitTransaction(tx.serialize())
     System.err.println(result)
 }
 
@@ -384,12 +359,8 @@ private def showKeys(): Unit = {
 }
 
 private def server(secret: String, uploadDir: Path): Unit = {
-    // val mnemonic = "face reform cry tissue august tell hair dress jungle useful stamp mean traffic donor shy youth engine wine champion chair crush note member window"
-    val mnemonic = System.getenv("MNEMONIC")
-    val hdKeyPair = new CIP1852()
-        .getKeyPairFromMnemonic(mnemonic, DerivationPath.createExternalAddressDerivationPath(0))
-    println(s"Starting server with public key: ${hdKeyPair.getPublicKey.getKeyData.toHex}")
-    Server(hdKeyPair, ByteString.fromHex(secret), uploadDir).start()
+    println(s"Starting server with public key: ${ctx.hdKeyPair.getPublicKey.getKeyData.toHex}")
+    Server(ctx.hdKeyPair, ByteString.fromHex(secret), uploadDir).start()
 }
 
 @main def main(cmd: String, others: String*): Unit = {

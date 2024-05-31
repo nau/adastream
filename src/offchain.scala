@@ -229,27 +229,3 @@ object Encryption {
         signer.update(claim.bytes, 0, claim.length)
         ByteString.fromArray(signer.generateSignature())
 }
-
-class Tx {
-    val plutusScript = PlutusV2Script
-        .builder()
-        .cborHex(bondProgram.doubleCborHex)
-        .build();
-
-    def makeSpendBondScriptTx(
-        sender: Account,
-        utxo: Utxo,
-        bondAction: BondAction
-    ): ScriptTx = {
-        val redeemer = Interop.toPlutusData(bondAction.toData)
-        val scriptTx = new ScriptTx()
-            .collectFrom(utxo, redeemer)
-            .payToAddress(sender.baseAddress(), utxo.getAmount)
-            .attachSpendingValidator(plutusScript)
-        scriptTx
-    }
-}
-
-class TxService(
-
-)
