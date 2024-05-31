@@ -1,37 +1,48 @@
 package adastream
-import adastream.BondContract.{BondAction, BondConfig}
+import adastream.BondContract.BondAction
+import adastream.BondContract.BondConfig
 import adastream.Encryption.chunksFromInputStream
 import com.bloxbean.cardano.client.account.Account
 import com.bloxbean.cardano.client.address.AddressProvider
 import com.bloxbean.cardano.client.api.model.Amount
+import com.bloxbean.cardano.client.backend.api.BackendService
 import com.bloxbean.cardano.client.backend.api.DefaultUtxoSupplier
 import com.bloxbean.cardano.client.backend.blockfrost.common.Constants
 import com.bloxbean.cardano.client.backend.blockfrost.service.BFBackendService
+import com.bloxbean.cardano.client.common.model.Network
 import com.bloxbean.cardano.client.common.model.Networks
-import com.bloxbean.cardano.client.crypto.cip1852.{CIP1852, DerivationPath}
+import com.bloxbean.cardano.client.crypto.cip1852.CIP1852
+import com.bloxbean.cardano.client.crypto.cip1852.DerivationPath
 import com.bloxbean.cardano.client.crypto.config.CryptoConfiguration
-import com.bloxbean.cardano.client.function.helper.{ScriptUtxoFinders, SignerProviders}
+import com.bloxbean.cardano.client.function.helper.ScriptUtxoFinders
+import com.bloxbean.cardano.client.function.helper.SignerProviders
 import com.bloxbean.cardano.client.plutus.spec.*
-import com.bloxbean.cardano.client.quicktx.{QuickTxBuilder, ScriptTx, Tx}
+import com.bloxbean.cardano.client.quicktx.QuickTxBuilder
+import com.bloxbean.cardano.client.quicktx.ScriptTx
+import com.bloxbean.cardano.client.quicktx.Tx
 import scalus.*
 import scalus.Compiler.compile
+import scalus.bloxbean.EvaluatorMode
+import scalus.bloxbean.Interop
+import scalus.bloxbean.NoScriptSupplier
+import scalus.bloxbean.ScalusTransactionEvaluator
+import scalus.bloxbean.ScriptSupplier
 import scalus.builtin.Builtins.*
-import scalus.builtin.Data.{ToData, toData}
-import scalus.builtin.{ByteString, Data, PlatformSpecific, given}
+import scalus.builtin.ByteString
+import scalus.builtin.Data
+import scalus.builtin.Data.ToData
+import scalus.builtin.Data.toData
+import scalus.builtin.PlatformSpecific
+import scalus.builtin.given
 import scalus.ledger.api.v2.*
-import scalus.uplc.{Program, Term}
+import scalus.sir.RemoveRecursivity
+import scalus.uplc.Program
+import scalus.uplc.Term
 import scalus.utils.Utils
 
 import java.nio.file.Path
 import scala.collection.immutable.ArraySeq
 import scala.util.Random
-import scalus.bloxbean.Interop
-import scalus.bloxbean.ScalusTransactionEvaluator
-import scalus.bloxbean.ScriptSupplier
-import scalus.bloxbean.NoScriptSupplier
-import scalus.bloxbean.EvaluatorMode
-import com.bloxbean.cardano.client.common.model.Network
-import com.bloxbean.cardano.client.backend.api.BackendService
 
 case class Sender(account: Account) {
     lazy val privateKey = ByteString.fromArray(account.privateKeyBytes)
@@ -71,10 +82,12 @@ class AppCtx(
 }
 
 val ps: PlatformSpecific = summon[PlatformSpecific]
-private val compiledBondScript = compile(BondContract.bondContractValidator)
+private val compiledBondScript =
+    compile(BondContract.bondContractValidator) |> RemoveRecursivity.apply
 val bondValidator: Term = compiledBondScript.toUplc(generateErrorTraces = true)
 val bondProgram: Program = Program((1, 0, 0), bondValidator)
-private val compiledHtlcScript = compile(BondContract.makeHtlcContractValidator)
+private val compiledHtlcScript =
+    compile(BondContract.makeHtlcContractValidator) |> RemoveRecursivity.apply
 val xorBytesScript: Term = compile(BondContract.xorBytes).toUplc(generateErrorTraces = true)
 private val htlcValidator = compiledHtlcScript.toUplc(generateErrorTraces = true)
 private val htlcProgram = Program((1, 0, 0), htlcValidator)
@@ -322,7 +335,7 @@ def withdraw(preimage: String, encId: String): Unit = {
     spendBond(ctx.sender.account, bondConfig, BondAction.Withdraw(ByteString.fromHex(preimage)))
 }
 
-private def spendBond(sender: Account, bondConfig: BondConfig, bondAction: BondAction): Unit = {
+private def spendBond(bondReceiver: Account, bondConfig: BondConfig, bondAction: BondAction): Unit = {
     val utxoSupplier = new DefaultUtxoSupplier(ctx.backendService.getUtxoService)
     val protocolParams = ctx.backendService.getEpochService().getProtocolParameters().getValue()
     val scalusEvaluator = new ScalusTransactionEvaluator(protocolParams, utxoSupplier)
@@ -336,14 +349,14 @@ private def spendBond(sender: Account, bondConfig: BondConfig, bondAction: BondA
     val redeemer = Interop.toPlutusData(bondAction.toData)
     val scriptTx = new ScriptTx()
         .collectFrom(utxo, redeemer)
-        .payToAddress(sender.baseAddress(), utxo.getAmount)
+        .payToAddress(bondReceiver.baseAddress(), utxo.getAmount)
         .attachSpendingValidator(ctx.bondPlutusScript)
-    val pubKeyHashBytes = sender.hdKeyPair().getPublicKey.getKeyHash
+    val pubKeyHashBytes = bondReceiver.hdKeyPair().getPublicKey.getKeyHash
     val quickTxBuilder = new QuickTxBuilder(ctx.backendService)
     val tx = quickTxBuilder
         .compose(scriptTx)
-        .feePayer(sender.baseAddress())
-        .withSigner(SignerProviders.signerFrom(sender))
+        .feePayer(bondReceiver.baseAddress())
+        .withSigner(SignerProviders.signerFrom(bondReceiver))
         .withTxEvaluator(scalusEvaluator)
         .withRequiredSigners(pubKeyHashBytes)
         .ignoreScriptCostEvaluationError(false)
@@ -369,6 +382,7 @@ private def server(secret: String, uploadDir: Path): Unit = {
             println(compiledBondScript.prettyXTerm.render(100))
             // println(bondProgram.doubleCborHex)
             println(compiledHtlcScript.prettyXTerm.render(100))
+            println(htlcValidator.prettyXTerm.render(100))
             // println(htlcProgram.doubleCborHex)
             println(s"bondProgram size: ${bondProgram.doubleCborEncoded.length}")
             println(s"htlcProgram size: ${htlcProgram.doubleCborEncoded.length}")

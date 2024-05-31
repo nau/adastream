@@ -85,7 +85,7 @@ class ContractTests extends munit.ScalaCheckSuite {
     )
 
     test(s"bondProgram size is ${bondProgram.doubleCborEncoded.length}") {
-        assert(bondProgram.doubleCborEncoded.length == 1063)
+        assert(bondProgram.doubleCborEncoded.length == 1038)
     }
 
     test("Server can withdraw with valid preimage and signature") {
@@ -375,7 +375,6 @@ class ContractTests extends munit.ScalaCheckSuite {
               TransactionBody
                   .builder()
                   .fee(ADAConversionUtil.adaToLovelace(0.2))
-                  .ttl(1000)
                   .inputs(inputs)
                   .requiredSigners(signatories.map(_.hash.bytes).asJava)
                   .build()
