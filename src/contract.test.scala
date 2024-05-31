@@ -3,12 +3,21 @@ package adastream
 import adastream.BondContract.BondAction
 import adastream.BondContract.BondConfig
 import com.bloxbean.cardano.client.backend.blockfrost.service.http.TransactionApi
+import com.bloxbean.cardano.client.common.ADAConversionUtil
 import com.bloxbean.cardano.client.function.TxBuilder
+import com.bloxbean.cardano.client.plutus.spec.ExUnits
+import com.bloxbean.cardano.client.plutus.spec.PlutusV2Script
 import com.bloxbean.cardano.client.plutus.spec.Redeemer
 import com.bloxbean.cardano.client.plutus.spec.RedeemerTag
 import com.bloxbean.cardano.client.quicktx.QuickTxBuilder
 import com.bloxbean.cardano.client.quicktx.ScriptTx
+import com.bloxbean.cardano.client.transaction.spec
 import com.bloxbean.cardano.client.transaction.spec.Transaction
+import com.bloxbean.cardano.client.transaction.spec.TransactionBody
+import com.bloxbean.cardano.client.transaction.spec.TransactionInput
+import com.bloxbean.cardano.client.transaction.spec.TransactionOutput
+import com.bloxbean.cardano.client.transaction.spec.TransactionWitnessSet
+import io.bullet.borer.Cbor
 import org.bouncycastle.crypto.AsymmetricCipherKeyPair
 import org.bouncycastle.crypto.generators.Ed25519KeyPairGenerator
 import org.bouncycastle.crypto.params.Ed25519KeyGenerationParameters
@@ -19,6 +28,7 @@ import org.scalacheck.Gen
 import org.scalacheck.Prop.*
 import org.scalacheck.Shrink
 import scalus.bloxbean.Interop
+import scalus.bloxbean.SlotConfig
 import scalus.builtin.ByteString
 import scalus.builtin.ByteString.StringInterpolators
 import scalus.builtin.Data
@@ -38,22 +48,14 @@ import scalus.uplc.eval.*
 import scalus.utils.Utils
 
 import java.io.ByteArrayInputStream
+import java.math.BigInteger
 import java.nio.file.Path
 import java.security.SecureRandom
 import java.util
 import scala.collection.immutable.ArraySeq
+import scala.jdk.CollectionConverters.*
 import scala.language.implicitConversions
 import scala.util.control.NonFatal
-import io.bullet.borer.Cbor
-import scalus.bloxbean.SlotConfig
-import java.math.BigInteger
-import com.bloxbean.cardano.client.transaction.spec
-import com.bloxbean.cardano.client.transaction.spec.TransactionBody
-import com.bloxbean.cardano.client.transaction.spec.TransactionInput
-import com.bloxbean.cardano.client.transaction.spec.TransactionOutput
-import com.bloxbean.cardano.client.common.ADAConversionUtil
-import com.bloxbean.cardano.client.transaction.spec.TransactionWitnessSet
-import com.bloxbean.cardano.client.plutus.spec.PlutusV2Script
 
 case class CekResult(budget: ExBudget, logs: Seq[String])
 
@@ -81,6 +83,12 @@ class ContractTests extends munit.ScalaCheckSuite {
       publicKey,
       crypto.blake2b_224(publicKey)
     )
+    val plutusScript = PlutusV2Script
+        .builder()
+        .`type`("PlutusScriptV2")
+        .cborHex(bondProgram.doubleCborHex)
+        .build()
+        .asInstanceOf[PlutusV2Script]
 
     test(s"bondProgram size is ${bondProgram.doubleCborEncoded.length}") {
         assert(bondProgram.doubleCborEncoded.length == 1063)
@@ -101,7 +109,7 @@ class ContractTests extends munit.ScalaCheckSuite {
         }
     }
 
-    val newValue = {
+    test("Server can't withdraw without a signature") {
         val withdraw = BondAction.Withdraw(preimage)
         evalBondValidator(bondConfig, withdraw, Seq.empty) {
             case Right(_)                   => fail(s"should fail")
@@ -109,7 +117,6 @@ class ContractTests extends munit.ScalaCheckSuite {
             case Left((e, r))               => fail(s"Unexpected error with $r", e)
         }
     }
-    test("Server can't withdraw without a signature")(newValue)
 
     test("Server can't withdraw with a wrong signature") {
         val withdraw = BondAction.Withdraw(preimage)
@@ -337,12 +344,27 @@ class ContractTests extends munit.ScalaCheckSuite {
         redeemer: Data,
         signatories: Seq[PubKeyHash]
     ): ScriptContext =
-        val plutusScript: PlutusV2Script = PlutusV2Script
+        val payeeAddress = ctx.sender.account.baseAddress()
+        val rdmr =
+            Redeemer
+                .builder()
+                .tag(RedeemerTag.Spend)
+                .data(Interop.toPlutusData(redeemer))
+                .index(BigInteger.valueOf(0))
+                .exUnits(
+                  ExUnits
+                      .builder()
+                      .steps(BigInteger.valueOf(1000))
+                      .mem(BigInteger.valueOf(1000))
+                      .build()
+                )
+                .build()
+
+        val input = TransactionInput
             .builder()
-            .cborHex(bondProgram.doubleCborHex)
+            .transactionId("1ab6879fc08345f51dc9571ac4f530bf8673e0d798758c470f9af6f98e2f3982")
+            .index(0)
             .build()
-        val payeeAddress = "addr1askdflakdjflajsdf"
-        val input = TransactionInput.builder().transactionId("deadbeef").index(0).build()
         val inputs = util.List.of(input)
 
         val utxo = Map(
@@ -350,6 +372,7 @@ class ContractTests extends munit.ScalaCheckSuite {
               .builder()
               .value(spec.Value.builder().coin(BigInteger.valueOf(20)).build())
               .address(payeeAddress)
+              .inlineDatum(Interop.toPlutusData(datum))
               .build()
         )
         val tx = Transaction
@@ -360,25 +383,17 @@ class ContractTests extends munit.ScalaCheckSuite {
                   .fee(ADAConversionUtil.adaToLovelace(0.2))
                   .ttl(1000)
                   .inputs(inputs)
-                  .requiredSigners(util.List.of(hex"deadbeef".bytes))
+                  .requiredSigners(signatories.map(_.hash.bytes).asJava)
                   .build()
             )
             .witnessSet(
               TransactionWitnessSet
                   .builder()
                   .plutusV2Scripts(util.List.of(plutusScript))
-                  .redeemers(util.List.of(redeemer))
-                  .plutusDataList(util.List.of(PlutusData.unit()))
+                  .redeemers(util.List.of(rdmr))
                   .build()
             )
             .build()
-        val rdmr =
-            Redeemer
-                .builder()
-                .tag(RedeemerTag.Spend)
-                .data(Interop.toPlutusData(redeemer))
-                .index(BigInteger.valueOf(0))
-                .build()
 
         val purpose = Interop.getScriptPurpose(
           rdmr,
@@ -391,30 +406,7 @@ class ContractTests extends munit.ScalaCheckSuite {
         val datumHash = crypto.blake2b_256(datumCbor)
         val datums = Seq((datumHash, datum))
         val protocolVersion = 8
-        val txInfo = Interop.getTxInfoV2(tx, datums, Map.empty, SlotConfig.default, protocolVersion)
+        val txInfo = Interop.getTxInfoV2(tx, datums, utxo, SlotConfig.default, protocolVersion)
         val scriptContext = ScriptContext(txInfo, purpose)
-        println(s"ScriptContext: $scriptContext")
-
-        ScriptContext(
-          TxInfo(
-            inputs = scalus.prelude.List.Nil,
-            referenceInputs = scalus.prelude.List.Nil,
-            outputs = scalus.prelude.List.Nil,
-            fee = Value.lovelace(BigInt("188021")),
-            mint = Value.zero,
-            dcert = scalus.prelude.List.Nil,
-            withdrawals = scalus.prelude.AssocMap.empty,
-            validRange = Interval.always,
-            signatories = scalus.prelude.List(signatories*),
-            redeemers = scalus.prelude.AssocMap.empty,
-            data = scalus.prelude.AssocMap.empty,
-            id = TxId(hex"1e0612fbd127baddfcd555706de96b46c4d4363ac78c73ab4dee6e6a7bf61fe9")
-          ),
-          ScriptPurpose.Spending(
-            TxOutRef(
-              TxId(hex"1ab6879fc08345f51dc9571ac4f530bf8673e0d798758c470f9af6f98e2f3982"),
-              0
-            )
-          )
-        )
+        scriptContext
 }

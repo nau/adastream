@@ -54,7 +54,12 @@ val xorBytesScript: Term = compile(BondContract.xorBytes).toUplc(generateErrorTr
 private val htlcValidator = compiledHtlcScript.toUplc(generateErrorTraces = true)
 private val htlcProgram = Program((1, 0, 0), htlcValidator)
 
-lazy val ctx = AppCtx(network = Networks.preview(), mnemonic = System.getenv("MNEMONIC"))
+lazy val ctx = AppCtx(
+  network = Networks.preview(),
+  mnemonic = Option(System.getenv("MNEMONIC")).getOrElse(
+    "accident cluster album vacuum witness rather right clown liquid shallow liar myself now okay toy potato toe achieve sphere piano crush drum vivid jungle"
+  )
+)
 
 private def publish(): Unit = {
     val is = System.in
