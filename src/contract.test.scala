@@ -2,6 +2,13 @@ package adastream
 
 import adastream.BondContract.BondAction
 import adastream.BondContract.BondConfig
+import com.bloxbean.cardano.client.backend.blockfrost.service.http.TransactionApi
+import com.bloxbean.cardano.client.function.TxBuilder
+import com.bloxbean.cardano.client.plutus.spec.Redeemer
+import com.bloxbean.cardano.client.plutus.spec.RedeemerTag
+import com.bloxbean.cardano.client.quicktx.QuickTxBuilder
+import com.bloxbean.cardano.client.quicktx.ScriptTx
+import com.bloxbean.cardano.client.transaction.spec.Transaction
 import org.bouncycastle.crypto.AsymmetricCipherKeyPair
 import org.bouncycastle.crypto.generators.Ed25519KeyPairGenerator
 import org.bouncycastle.crypto.params.Ed25519KeyGenerationParameters
@@ -11,8 +18,10 @@ import org.scalacheck.Arbitrary
 import org.scalacheck.Gen
 import org.scalacheck.Prop.*
 import org.scalacheck.Shrink
+import scalus.bloxbean.Interop
 import scalus.builtin.ByteString
 import scalus.builtin.ByteString.StringInterpolators
+import scalus.builtin.Data
 import scalus.builtin.Data.toData
 import scalus.builtin.PlatformSpecific
 import scalus.builtin.ToDataInstances.given
@@ -31,15 +40,20 @@ import scalus.utils.Utils
 import java.io.ByteArrayInputStream
 import java.nio.file.Path
 import java.security.SecureRandom
+import java.util
 import scala.collection.immutable.ArraySeq
 import scala.language.implicitConversions
 import scala.util.control.NonFatal
-import com.bloxbean.cardano.client.quicktx.QuickTxBuilder
-import com.bloxbean.cardano.client.quicktx.ScriptTx
-import com.bloxbean.cardano.client.transaction.spec.Transaction
-import com.bloxbean.cardano.client.backend.blockfrost.service.http.TransactionApi
-import com.bloxbean.cardano.client.function.TxBuilder
-import scalus.bloxbean.Interop
+import io.bullet.borer.Cbor
+import scalus.bloxbean.SlotConfig
+import java.math.BigInteger
+import com.bloxbean.cardano.client.transaction.spec
+import com.bloxbean.cardano.client.transaction.spec.TransactionBody
+import com.bloxbean.cardano.client.transaction.spec.TransactionInput
+import com.bloxbean.cardano.client.transaction.spec.TransactionOutput
+import com.bloxbean.cardano.client.common.ADAConversionUtil
+import com.bloxbean.cardano.client.transaction.spec.TransactionWitnessSet
+import com.bloxbean.cardano.client.plutus.spec.PlutusV2Script
 
 case class CekResult(budget: ExBudget, logs: Seq[String])
 
@@ -213,8 +227,10 @@ class ContractTests extends munit.ScalaCheckSuite {
         withdraw: BondAction,
         signatures: Seq[PubKeyHash]
     )(pf: PartialFunction[Either[(Throwable, CekResult), CekResult], A]): A = {
-        val scriptContext = makeScriptContext(signatures)
-        val term = bondValidator $ bondConfig.toData $ withdraw.toData $ scriptContext.toData
+        val datum = bondConfig.toData
+        val redeemer = withdraw.toData
+        val scriptContext = makeScriptContext(datum, redeemer, signatures)
+        val term = bondValidator $ datum $ redeemer $ scriptContext.toData
         val result = evalTerm(term)
         pf(result)
     }
@@ -316,7 +332,69 @@ class ContractTests extends munit.ScalaCheckSuite {
         }
     }
 
-    def makeScriptContext(signatories: Seq[PubKeyHash]): ScriptContext =
+    def makeScriptContext(
+        datum: Data,
+        redeemer: Data,
+        signatories: Seq[PubKeyHash]
+    ): ScriptContext =
+        val plutusScript: PlutusV2Script = PlutusV2Script
+            .builder()
+            .cborHex(bondProgram.doubleCborHex)
+            .build()
+        val payeeAddress = "addr1askdflakdjflajsdf"
+        val input = TransactionInput.builder().transactionId("deadbeef").index(0).build()
+        val inputs = util.List.of(input)
+
+        val utxo = Map(
+          input -> TransactionOutput
+              .builder()
+              .value(spec.Value.builder().coin(BigInteger.valueOf(20)).build())
+              .address(payeeAddress)
+              .build()
+        )
+        val tx = Transaction
+            .builder()
+            .body(
+              TransactionBody
+                  .builder()
+                  .fee(ADAConversionUtil.adaToLovelace(0.2))
+                  .ttl(1000)
+                  .inputs(inputs)
+                  .requiredSigners(util.List.of(hex"deadbeef".bytes))
+                  .build()
+            )
+            .witnessSet(
+              TransactionWitnessSet
+                  .builder()
+                  .plutusV2Scripts(util.List.of(plutusScript))
+                  .redeemers(util.List.of(redeemer))
+                  .plutusDataList(util.List.of(PlutusData.unit()))
+                  .build()
+            )
+            .build()
+        val rdmr =
+            Redeemer
+                .builder()
+                .tag(RedeemerTag.Spend)
+                .data(Interop.toPlutusData(redeemer))
+                .index(BigInteger.valueOf(0))
+                .build()
+
+        val purpose = Interop.getScriptPurpose(
+          rdmr,
+          tx.getBody().getInputs(),
+          util.List.of(),
+          util.List.of(),
+          util.List.of()
+        )
+        val datumCbor = ByteString.fromArray(Cbor.encode(datum).toByteArray)
+        val datumHash = crypto.blake2b_256(datumCbor)
+        val datums = Seq((datumHash, datum))
+        val protocolVersion = 8
+        val txInfo = Interop.getTxInfoV2(tx, datums, Map.empty, SlotConfig.default, protocolVersion)
+        val scriptContext = ScriptContext(txInfo, purpose)
+        println(s"ScriptContext: $scriptContext")
+
         ScriptContext(
           TxInfo(
             inputs = scalus.prelude.List.Nil,

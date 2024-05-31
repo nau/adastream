@@ -32,16 +32,20 @@ import scalus.bloxbean.NoScriptSupplier
 import scalus.bloxbean.EvaluatorMode
 import com.bloxbean.cardano.client.common.model.Network
 
-case class Sender(
-    network: Network,
-    account: Account
-) {
+case class Sender(account: Account) {
     lazy val privateKey = ByteString.fromArray(account.privateKeyBytes)
     lazy val publicKey = ByteString.fromArray(account.publicKeyBytes)
     lazy val publicKeyHash = ByteString.fromArray(account.hdKeyPair.getPublicKey.getKeyHash)
 }
 
-private val ps: PlatformSpecific = summon[PlatformSpecific]
+class AppCtx(
+    network: Network,
+    mnemonic: String
+) {
+    lazy val sender = Sender(new Account(network, mnemonic))
+}
+
+val ps: PlatformSpecific = summon[PlatformSpecific]
 private val compiledBondScript = compile(BondContract.bondContractValidator)
 val bondValidator: Term = compiledBondScript.toUplc(generateErrorTraces = true)
 val bondProgram: Program = Program((1, 0, 0), bondValidator)
@@ -50,7 +54,7 @@ val xorBytesScript: Term = compile(BondContract.xorBytes).toUplc(generateErrorTr
 private val htlcValidator = compiledHtlcScript.toUplc(generateErrorTraces = true)
 private val htlcProgram = Program((1, 0, 0), htlcValidator)
 
-lazy val sender = Sender(Networks.preview(), new Account(Networks.preview(), System.getenv("MNEMONIC")))
+lazy val ctx = AppCtx(network = Networks.preview(), mnemonic = System.getenv("MNEMONIC"))
 
 private def publish(): Unit = {
     val is = System.in
@@ -252,18 +256,18 @@ private def makeBondTx(): Unit = {
     val bondConfig = BondContract.BondConfig(
       paymentHash,
       encId,
-      sender.publicKey,
-      sender.publicKeyHash
+      ctx.sender.publicKey,
+      ctx.sender.publicKeyHash
     )
     val datumData = Interop.toPlutusData(bondConfig.toData)
     // val datumData = PlutusData.unit()
     val tx = new Tx()
         .payToContract(scriptAddress, Amount.ada(100), datumData)
-        .from(sender.account.getBaseAddress.getAddress)
+        .from(ctx.sender.account.getBaseAddress.getAddress)
 
     val result = quickTxBuilder
         .compose(tx)
-        .withSigner(SignerProviders.signerFrom(sender.account))
+        .withSigner(SignerProviders.signerFrom(ctx.sender.account))
         .complete()
     println(result)
 }
@@ -300,8 +304,8 @@ private def spendBondWithFraudProof(
     val bondConfig = BondContract.BondConfig(
       paymentHash,
       ByteString.fromHex(encId),
-      sender.publicKey,
-      sender.publicKeyHash
+      ctx.sender.publicKey,
+      ctx.sender.publicKeyHash
     )
     System.err.println(s"bondConfig: $bondConfig")
     val fraudProof = BondAction.FraudProof(
@@ -312,7 +316,7 @@ private def spendBondWithFraudProof(
       chunkIndex = chunkIndex,
       merkleProof = Data.List(merkleProof.map(bData).toList)
     )
-    spendBond(sender.account, bondConfig, fraudProof)
+    spendBond(ctx.sender.account, bondConfig, fraudProof)
 }
 
 def withdraw(preimage: String, encId: String): Unit = {
@@ -320,10 +324,10 @@ def withdraw(preimage: String, encId: String): Unit = {
     val bondConfig = BondContract.BondConfig(
       paymentHash,
       ByteString.fromHex(encId),
-      sender.publicKey,
-      sender.publicKeyHash
+      ctx.sender.publicKey,
+      ctx.sender.publicKeyHash
     )
-    spendBond(sender.account, bondConfig, BondAction.Withdraw(ByteString.fromHex(preimage)))
+    spendBond(ctx.sender.account, bondConfig, BondAction.Withdraw(ByteString.fromHex(preimage)))
 }
 
 private def spendBond(sender: Account, bondConfig: BondConfig, bondAction: BondAction): Unit = {
@@ -370,8 +374,8 @@ private def spendBond(sender: Account, bondConfig: BondConfig, bondAction: BondA
 }
 
 private def showKeys(): Unit = {
-    println(s"private key: ${sender.privateKey.toHex}")
-    println(s"public key: ${sender.publicKey.toHex}")
+    println(s"private key: ${ctx.sender.privateKey.toHex}")
+    println(s"public key: ${ctx.sender.publicKey.toHex}")
 }
 
 private def server(secret: String, uploadDir: Path): Unit = {
