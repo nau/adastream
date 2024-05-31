@@ -20,6 +20,7 @@ import com.bloxbean.cardano.client.plutus.spec.*
 import com.bloxbean.cardano.client.quicktx.QuickTxBuilder
 import com.bloxbean.cardano.client.quicktx.ScriptTx
 import com.bloxbean.cardano.client.quicktx.Tx
+import com.monovore.decline.*
 import scalus.*
 import scalus.Compiler.compile
 import scalus.bloxbean.EvaluatorMode
@@ -335,7 +336,11 @@ def withdraw(preimage: String, encId: String): Unit = {
     spendBond(ctx.sender.account, bondConfig, BondAction.Withdraw(ByteString.fromHex(preimage)))
 }
 
-private def spendBond(bondReceiver: Account, bondConfig: BondConfig, bondAction: BondAction): Unit = {
+private def spendBond(
+    bondReceiver: Account,
+    bondConfig: BondConfig,
+    bondAction: BondAction
+): Unit = {
     val utxoSupplier = new DefaultUtxoSupplier(ctx.backendService.getUtxoService)
     val protocolParams = ctx.backendService.getEpochService().getProtocolParameters().getValue()
     val scalusEvaluator = new ScalusTransactionEvaluator(protocolParams, utxoSupplier)
@@ -376,24 +381,93 @@ private def server(secret: String, uploadDir: Path): Unit = {
     Server(ctx.hdKeyPair, ByteString.fromHex(secret), uploadDir).start()
 }
 
+private def info() = {
+    println(compiledBondScript.prettyXTerm.render(100))
+    // println(bondProgram.doubleCborHex)
+    println(compiledHtlcScript.prettyXTerm.render(100))
+    println(htlcValidator.prettyXTerm.render(100))
+    // println(htlcProgram.doubleCborHex)
+    println(s"bondProgram size: ${bondProgram.doubleCborEncoded.length}")
+    println(s"htlcProgram size: ${htlcProgram.doubleCborEncoded.length}")
+}
+
+enum Cmd:
+    case Info, Publish, Bond, Keys
+    case Encrypt(secret: String)
+    case EncryptWrong(secret: String)
+    case Decrypt(secret: String, publicKey: String)
+    case Verify(pubKey: String)
+    case SpendBond(secret: String, publicKey: String)
+    case Withdraw(preimage: String, encId: String)
+    case Server(secret: String, uploadDir: Path)
+
+val adastreamCommand =
+    import cats.implicits._
+    val infoCommand = Opts.subcommand("info", "Prints the contract info") {
+        Opts(Cmd.Info)
+    }
+    val publishCommand = Opts.subcommand("publish", "Computes the EncId and prints it to stdout") {
+        Opts(Cmd.Publish)
+    }
+    val encryptCommand = Opts.subcommand("encrypt", "Encrypts stdin and writes to stdout") {
+        Opts.argument[String]("secret").map(Cmd.Encrypt.apply)
+    }
+    val encryptWrongCommand = Opts.subcommand("encrypt-wrong", "Encrypts stdin incorrectly") {
+        Opts.argument[String]("secret").map(Cmd.EncryptWrong.apply)
+    }
+    val decryptCommand = Opts.subcommand("decrypt", "Decrypts stdin and writes to stdout") {
+        (Opts.argument[String]("secret"), Opts.argument[String]("public-key"))
+            .mapN(Cmd.Decrypt.apply)
+    }
+    val spendBondCommand = Opts.subcommand("spend-bond", "Spends a bond") {
+        (Opts.argument[String]("secret"), Opts.argument[String]("public-key"))
+            .mapN(Cmd.SpendBond.apply)
+    }
+    val verifyCommand = Opts.subcommand("verify", "Verifies stdin with a public key") {
+        Opts.argument[String]("public-key").map(Cmd.Verify.apply)
+    }
+    val bondCommand = Opts.subcommand("bond", "Creates and submits a bond transaction") {
+        Opts(Cmd.Bond)
+    }
+    val withdrawCommand = Opts.subcommand("withdraw", "Withdraws a bond") {
+        (Opts.argument[String]("preimage"), Opts.argument[String]("enc-id"))
+            .mapN(Cmd.Withdraw.apply)
+    }
+    val keysCommand = Opts.subcommand("keys", "Shows keys") {
+        Opts(Cmd.Keys)
+    }
+    val serverCommand = Opts.subcommand("server", "Starts a REST API server") {
+        (Opts.argument[String]("secret"), Opts.argument[Path]("upload-dir")).mapN(Cmd.Server.apply)
+    }
+
+    Command(name = "adastream", header = "AdaStreams")(
+      infoCommand
+          orElse publishCommand
+          orElse encryptCommand
+          orElse encryptWrongCommand
+          orElse decryptCommand
+          orElse spendBondCommand
+          orElse verifyCommand
+          orElse bondCommand
+          orElse withdrawCommand
+          orElse keysCommand
+          orElse serverCommand
+    )
+
 @main def main(cmd: String, others: String*): Unit = {
-    cmd match
-        case "info" =>
-            println(compiledBondScript.prettyXTerm.render(100))
-            // println(bondProgram.doubleCborHex)
-            println(compiledHtlcScript.prettyXTerm.render(100))
-            println(htlcValidator.prettyXTerm.render(100))
-            // println(htlcProgram.doubleCborHex)
-            println(s"bondProgram size: ${bondProgram.doubleCborEncoded.length}")
-            println(s"htlcProgram size: ${htlcProgram.doubleCborEncoded.length}")
-        case "publish"       => publish()
-        case "encrypt"       => encrypt(others.head, encryptIncorrectly = false)
-        case "encrypt-wrong" => encrypt(others.head, encryptIncorrectly = true)
-        case "decrypt"       => decrypt(others.head, others(1), spendIfWrong = false)
-        case "spend-bond"    => decrypt(others.head, others(1), spendIfWrong = true)
-        case "verify"        => verify(others.head)
-        case "bond"          => makeBondTx()
-        case "withdraw"      => withdraw(others.head, others(1))
-        case "keys"          => showKeys()
-        case "server"        => server(others.head, Path.of(others(1)))
+    adastreamCommand.parse(cmd +: others.toList) match
+        case Left(help) => println(help)
+        case Right(cmd) =>
+            cmd match
+                case Cmd.Info                      => info()
+                case Cmd.Publish                   => publish()
+                case Cmd.Encrypt(secret)           => encrypt(secret, encryptIncorrectly = false)
+                case Cmd.EncryptWrong(secret)      => encrypt(secret, encryptIncorrectly = true)
+                case Cmd.Decrypt(secret, pubKey)   => decrypt(secret, pubKey, spendIfWrong = false)
+                case Cmd.SpendBond(secret, pubKey) => decrypt(secret, pubKey, spendIfWrong = true)
+                case Cmd.Verify(pubKey)            => verify(pubKey)
+                case Cmd.Bond                      => makeBondTx()
+                case Cmd.Withdraw(preimage, encId) => withdraw(preimage, encId)
+                case Cmd.Keys                      => showKeys()
+                case Cmd.Server(secret, uploadDir) => server(secret, uploadDir)
 }
