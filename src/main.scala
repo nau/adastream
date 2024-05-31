@@ -454,8 +454,8 @@ val adastreamCommand =
           orElse serverCommand
     )
 
-@main def main(cmd: String, others: String*): Unit = {
-    adastreamCommand.parse(cmd +: others.toList) match
+@main def main(args: String*): Unit = {
+    adastreamCommand.parse(args) match
         case Left(help) => println(help)
         case Right(cmd) =>
             cmd match
