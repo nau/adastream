@@ -34,11 +34,11 @@ import com.bloxbean.cardano.client.common.model.Network
 
 case class Sender(
     network: Network,
-    sender: Account
+    account: Account
 ) {
-    lazy val privateKey = ByteString.fromArray(sender.privateKeyBytes)
-    lazy val publicKey = ByteString.fromArray(sender.publicKeyBytes)
-    lazy val publicKeyHash = ByteString.fromArray(sender.hdKeyPair.getPublicKey.getKeyHash)
+    lazy val privateKey = ByteString.fromArray(account.privateKeyBytes)
+    lazy val publicKey = ByteString.fromArray(account.publicKeyBytes)
+    lazy val publicKeyHash = ByteString.fromArray(account.hdKeyPair.getPublicKey.getKeyHash)
 }
 
 private val ps: PlatformSpecific = summon[PlatformSpecific]
@@ -259,11 +259,11 @@ private def makeBondTx(): Unit = {
     // val datumData = PlutusData.unit()
     val tx = new Tx()
         .payToContract(scriptAddress, Amount.ada(100), datumData)
-        .from(sender.sender.getBaseAddress.getAddress)
+        .from(sender.account.getBaseAddress.getAddress)
 
     val result = quickTxBuilder
         .compose(tx)
-        .withSigner(SignerProviders.signerFrom(sender.sender))
+        .withSigner(SignerProviders.signerFrom(sender.account))
         .complete()
     println(result)
 }
@@ -312,7 +312,7 @@ private def spendBondWithFraudProof(
       chunkIndex = chunkIndex,
       merkleProof = Data.List(merkleProof.map(bData).toList)
     )
-    spendBond(sender.sender, bondConfig, fraudProof)
+    spendBond(sender.account, bondConfig, fraudProof)
 }
 
 def withdraw(preimage: String, encId: String): Unit = {
@@ -323,7 +323,7 @@ def withdraw(preimage: String, encId: String): Unit = {
       sender.publicKey,
       sender.publicKeyHash
     )
-    spendBond(sender.sender, bondConfig, BondAction.Withdraw(ByteString.fromHex(preimage)))
+    spendBond(sender.account, bondConfig, BondAction.Withdraw(ByteString.fromHex(preimage)))
 }
 
 private def spendBond(sender: Account, bondConfig: BondConfig, bondAction: BondAction): Unit = {
