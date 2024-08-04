@@ -9,25 +9,21 @@
     , nixpkgs
     , ...
     } @ inputs:
-    (flake-utils.lib.eachSystem [ "x86_64-darwin" "x86_64-linux" ]
+    (flake-utils.lib.eachSystem [ "x86_64-darwin" "x86_64-linux" "aarch64-darwin" ]
       (system:
       let
         pkgs = import nixpkgs { inherit system; };
       in
       rec {
         devShell = pkgs.mkShell {
-          JAVA_OPTS="-Xmx2g -XX:+UseG1GC";
           # This fixes bash prompt/autocomplete issues with subshells (i.e. in VSCode) under `nix develop`/direnv
           buildInputs = [ pkgs.bashInteractive ];
           packages = with pkgs; [
             git
             openjdk21
-            sbt
-            mill
+            scala-cli
             scalafmt
-            niv
             nixpkgs-fmt
-            nodejs
           ];
         };
       })

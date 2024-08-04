@@ -382,8 +382,11 @@ private def server(secret: String, uploadDir: Path): Unit = {
 }
 
 private def info() = {
+    println("AdaStream Bond contract")
     println(compiledBondScript.prettyXTerm.render(100))
+    println(bondValidator.prettyXTerm.render(100))
     // println(bondProgram.doubleCborHex)
+    println("AdaStream HTLC contract")
     println(compiledHtlcScript.prettyXTerm.render(100))
     println(htlcValidator.prettyXTerm.render(100))
     // println(htlcProgram.doubleCborHex)

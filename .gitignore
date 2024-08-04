@@ -1,6 +1,7 @@
 target
 files
 adastream
+.history
 /.bsp
 .bloop/
 /.idea

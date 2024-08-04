@@ -85,7 +85,11 @@ class ContractTests extends munit.ScalaCheckSuite {
     )
 
     test(s"bondProgram size is ${bondProgram.doubleCborEncoded.length}") {
-        assert(bondProgram.doubleCborEncoded.length == 1038)
+        assertEquals(bondProgram.doubleCborEncoded.length, 1038)
+    }
+
+    test(s"htlcProgram size is ${htlcProgram.doubleCborEncoded.length}") {
+        assertEquals(htlcProgram.doubleCborEncoded.length, 374)
     }
 
     test("Server can withdraw with valid preimage and signature") {

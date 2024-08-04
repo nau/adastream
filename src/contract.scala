@@ -1,16 +1,23 @@
 package adastream
 
 import scalus.*
-import scalus.Compiler.fieldAsData
 import scalus.builtin.Builtins.*
-import scalus.builtin.Data.{FromData, ToData, fromData, toData}
+import scalus.builtin.ByteString
+import scalus.builtin.Data
+import scalus.builtin.Data.FromData
+import scalus.builtin.Data.ToData
+import scalus.builtin.Data.fromData
+import scalus.builtin.Data.toData
+import scalus.builtin.FromData
+import scalus.builtin.List
+import scalus.builtin.ToData
 import scalus.builtin.ToDataInstances.given
-import scalus.builtin.{ByteString, Data, FromData, List, ToData, given}
+import scalus.builtin.given
 import scalus.ledger.api.v1.Extended
 import scalus.ledger.api.v1.FromDataInstances.given
+import scalus.ledger.api.v1.IntervalBoundType
 import scalus.ledger.api.v2.*
 import scalus.utils.Utils
-import scalus.ledger.api.v1.IntervalBoundType
 
 extension (a: Array[Byte]) def toHex: String = Utils.bytesToHex(a)
 
@@ -188,17 +195,17 @@ object BondContract {
       *   ScriptContext
       */
     def bondContractValidator(datum: Data, redeemer: Data, ctxData: Data): Boolean = {
-        fromData[BondConfig](datum) match
+        datum.to[BondConfig] match
             case BondConfig(passwordHash, encId, serverPubKey, serverPubKeyHash) =>
                 trace("fromData[BondConfig]")(())
-                fromData[BondAction](redeemer) match
+                redeemer.to[BondAction] match
                     case BondAction.Withdraw(password) =>
                         trace("BondAction.Withdraw(preimage)")(())
                         // get signatories from ScriptContext
-                        val signatories = fieldAsData[ScriptContext](_.txInfo.signatories)(ctxData)
+                        val signatories = ctxData.field[ScriptContext](_.txInfo.signatories)
                         // get PubKeyHash as a ByteString from the first signatory
                         // NOTE: we assume that the first signatory is the server
-                        val pkh = unBData(unListData(signatories).head)
+                        val pkh = signatories.toList.head.toByteString
                         // verify that the signatory is the server PubKeyHash from the BondConfig
                         val verifySignature = pkh == serverPubKeyHash
                         // verify that the password is the correct preimage of the passwordHash
@@ -230,16 +237,16 @@ object BondContract {
 
     /** Hash-Time Locked Contract validator
       */
-    inline def makeHtlcContractValidator(
-        inline clientPubKeyHash: Data,
-        inline expiration: PosixTime,
-        inline hash: ByteString
+    def makeHtlcContractValidator(
+        clientPubKeyHash: Data,
+        expiration: PosixTime,
+        hash: ByteString
     )(datum: Data, redeemer: Data, ctxData: Data): Unit = {
         val validPreimage = hash == sha2_256(unBData(redeemer))
         val expired = {
-            val txInfoData = fieldAsData[ScriptContext](_.txInfo)(ctxData)
-            val signatoriesData = fieldAsData[TxInfo](_.signatories)(txInfoData)
-            val txtime = fromData[Interval](fieldAsData[TxInfo](_.validRange)(txInfoData))
+            val txInfoData = ctxData.field[ScriptContext](_.txInfo)
+            val signatoriesData = txInfoData.field[TxInfo](_.signatories)
+            val txtime = txInfoData.field[TxInfo](_.validRange).to[Interval]
             txtime.from.boundType match
                 case IntervalBoundType.Finite(txtime) =>
                     val expired = expiration < txtime
