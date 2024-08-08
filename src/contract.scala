@@ -17,7 +17,10 @@ import scalus.ledger.api.v1.Extended
 import scalus.ledger.api.v1.FromDataInstances.given
 import scalus.ledger.api.v1.IntervalBoundType
 import scalus.ledger.api.v2.*
+import scalus.prelude.?
+import scalus.prelude.Prelude.log
 import scalus.utils.Utils
+import scalus.ledger.api.v1.IntervalBound
 
 extension (a: Array[Byte]) def toHex: String = Utils.bytesToHex(a)
 
@@ -161,15 +164,15 @@ object BondContract {
             // hash( Ei ⊕ hash( preimage || i) ) ≠ Hi
             val expectedChunkHash = sha2_256(xor(encryptedChunk, sha2_256(preimageAndIndex)))
             expectedChunkHash != chunkHash
-        trace("verifyWrongChunkHash")(())
+        log("verifyWrongChunkHash")
         val verifyValidClaimSignature = {
             val claim = appendByteString(encId, preimageHash)
             verifyEd25519Signature(serverPubKey, claim, signature)
         }
-        trace("verifyValidClaimSignature")(())
+        log("verifyValidClaimSignature")
 
         val verifyValidPreimage = verifyPreimage(preimage, preimageHash)
-        trace("verifyValidPreimage")(())
+        log("verifyValidPreimage")
 
         val merkleInclusionProofValid = verifyMerkleInclusionProof(
           merkleProof,
@@ -178,10 +181,10 @@ object BondContract {
           chunkIndex,
           encId
         )
-        (verifyWrongChunkHash || (throw new Exception("W")))
-        && (verifyValidClaimSignature || (throw new Exception("S")))
-        && (verifyValidPreimage || (throw new Exception("P")))
-        && (merkleInclusionProofValid || (throw new Exception("M")))
+        verifyWrongChunkHash.?
+        && verifyValidClaimSignature.?
+        && verifyValidPreimage.?
+        && merkleInclusionProofValid.?
 
     /** Bond contract validator
       *
@@ -194,25 +197,26 @@ object BondContract {
       * @param ctxData
       *   ScriptContext
       */
-    def bondContractValidator(datum: Data, redeemer: Data, ctxData: Data): Boolean = {
+    def bondContractValidator(datum: Data, redeemer: Data, ctxData: Data): Unit = {
         datum.to[BondConfig] match
             case BondConfig(passwordHash, encId, serverPubKey, serverPubKeyHash) =>
-                trace("fromData[BondConfig]")(())
-                redeemer.to[BondAction] match
+                log("fromData[BondConfig]")
+                val result = redeemer.to[BondAction] match {
                     case BondAction.Withdraw(password) =>
-                        trace("BondAction.Withdraw(preimage)")(())
-                        // get signatories from ScriptContext
-                        val signatories = ctxData.field[ScriptContext](_.txInfo.signatories)
+                        log("BondAction.Withdraw(preimage)")
                         // get PubKeyHash as a ByteString from the first signatory
                         // NOTE: we assume that the first signatory is the server
-                        val pkh = signatories.toList.head.toByteString
+                        val pkh = ctxData
+                            .field[ScriptContext](_.txInfo.signatories)
+                            .toList
+                            .head
+                            .toByteString
                         // verify that the signatory is the server PubKeyHash from the BondConfig
                         val verifySignature = pkh == serverPubKeyHash
                         // verify that the password is the correct preimage of the passwordHash
                         val verifyValidPreimage = verifyPreimage(password, passwordHash)
                         // return true if both conditions are met
-                        (verifySignature || (throw new Exception("S")))
-                        && (verifyValidPreimage || (throw new Exception("P")))
+                        verifySignature.? && verifyValidPreimage.?
                     case BondAction.FraudProof(
                           signature,
                           preimage,
@@ -221,7 +225,7 @@ object BondContract {
                           chunkIndex,
                           merkleProof
                         ) =>
-                        trace("BondAction.FraudProof")(())
+                        log("BondAction.FraudProof")
                         verifyFraudProof(
                           chunkHash,
                           chunkIndex,
@@ -233,6 +237,8 @@ object BondContract {
                           serverPubKey,
                           signature
                         )
+                }
+                if result then () else throw new Exception()
     }
 
     /** Hash-Time Locked Contract validator
@@ -242,21 +248,21 @@ object BondContract {
         expiration: PosixTime,
         hash: ByteString
     )(datum: Data, redeemer: Data, ctxData: Data): Unit = {
-        val validPreimage = hash == sha2_256(unBData(redeemer))
+        val validPreimage = hash == sha2_256(redeemer.toByteString)
         val expired = {
             val txInfoData = ctxData.field[ScriptContext](_.txInfo)
-            val signatoriesData = txInfoData.field[TxInfo](_.signatories)
-            val txtime = txInfoData.field[TxInfo](_.validRange).to[Interval]
-            txtime.from.boundType match
+            val txtime = txInfoData.field[TxInfo](_.validRange.from.boundType).to[IntervalBoundType]
+            txtime match
                 case IntervalBoundType.Finite(txtime) =>
                     val expired = expiration < txtime
                     val signedByClient = {
-                        val signaturePubKeyHashData = unListData(signatoriesData).head
+                        val signaturePubKeyHashData =
+                            txInfoData.field[TxInfo](_.signatories).toList.head
                         signaturePubKeyHashData == clientPubKeyHash
                     }
-                    expired && signedByClient
+                    expired.? && signedByClient.?
                 case _ => false
         }
-        if validPreimage || expired then () else throw new Exception()
+        if validPreimage.? || expired.? then () else throw new Exception()
     }
 }

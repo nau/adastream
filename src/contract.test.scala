@@ -44,6 +44,7 @@ import scalus.uplc.Program
 import scalus.uplc.Term
 import scalus.uplc.TermDSL.{*, given}
 import scalus.uplc.UplcParser
+import scalus.uplc.eval
 import scalus.uplc.eval.*
 import scalus.utils.Utils
 
@@ -85,11 +86,11 @@ class ContractTests extends munit.ScalaCheckSuite {
     )
 
     test(s"bondProgram size is ${bondProgram.doubleCborEncoded.length}") {
-        assertEquals(bondProgram.doubleCborEncoded.length, 1038)
+        assertEquals(bondProgram.doubleCborEncoded.length, 1221)
     }
 
     test(s"htlcProgram size is ${htlcProgram.doubleCborEncoded.length}") {
-        assertEquals(htlcProgram.doubleCborEncoded.length, 374)
+        assertEquals(htlcProgram.doubleCborEncoded.length, 393)
     }
 
     test("Server can withdraw with valid preimage and signature") {
@@ -99,20 +100,20 @@ class ContractTests extends munit.ScalaCheckSuite {
           withdraw,
           Seq(PubKeyHash(bondConfig.serverPubKeyHash))
         ) {
-            case Right(CekResult(budget, logs)) =>
-                assert(0 < budget.cpu && budget.cpu < 14_000000L)
-                assert(0 < budget.memory && budget.memory < 50000L)
-            case Left((e, res)) =>
-                fail(s"Consumed ${showBudget(res.budget)}\nLogs: ${res.logs.mkString("\n")}", e)
+            case eval.Result.Success(_, budget, _, logs) =>
+                assertEquals(budget.cpu, 11_364508L)
+                assertEquals(budget.memory, 32992L)
+            case res @ eval.Result.Failure(ex, _, _, _) =>
+                fail(res.toString, ex)
         }
     }
 
     test("Server can't withdraw without a signature") {
         val withdraw = BondAction.Withdraw(preimage)
         evalBondValidator(bondConfig, withdraw, Seq.empty) {
-            case Right(_)                   => fail(s"should fail")
-            case Left((_: BuiltinError, _)) =>
-            case Left((e, r))               => fail(s"Unexpected error with $r", e)
+            case r: eval.Result.Success                        => fail(s"should fail: $r")
+            case eval.Result.Failure(_: BuiltinError, _, _, _) =>
+            case r @ eval.Result.Failure(e, _, _, _)           => fail(s"$r", e)
         }
     }
 
@@ -123,9 +124,9 @@ class ContractTests extends munit.ScalaCheckSuite {
           withdraw,
           Seq(PubKeyHash(ByteString.fromString("wrong")))
         ) {
-            case Right(_)                        => fail(s"should fail")
-            case Left((_: EvaluationFailure, _)) =>
-            case Left((e, r))                    => fail(s"Unexpected error with $r", e)
+            case r: eval.Result.Success                             => fail(r.toString())
+            case eval.Result.Failure(_: EvaluationFailure, _, _, _) =>
+            case r @ eval.Result.Failure(e, _, _, _)                => fail(s"$r", e)
         }
     }
 
@@ -136,9 +137,9 @@ class ContractTests extends munit.ScalaCheckSuite {
           withdraw,
           Seq(PubKeyHash(bondConfig.serverPubKeyHash))
         ) {
-            case Right(_)                        => fail(s"should fail")
-            case Left((_: EvaluationFailure, _)) =>
-            case Left((e, r))                    => fail(s"Unexpected error with $r", e)
+            case r: eval.Result.Success                             => fail(s"should fail: $r")
+            case eval.Result.Failure(_: EvaluationFailure, _, _, _) =>
+            case r @ eval.Result.Failure(e, _, _, _)                => fail(s"$r", e)
         }
     }
 
@@ -197,59 +198,29 @@ class ContractTests extends munit.ScalaCheckSuite {
                 )
 
             evalBondValidator(bondConfig, action, Seq.empty) {
-                case Right(CekResult(budget, _)) =>
+                case eval.Result.Success(_, budget, _, _) =>
                     assert(budget.cpu < 2_000_000000L)
                     assert(budget.memory < 3_000000L)
                     true
-                case Left((e, r)) =>
+                case r @ eval.Result.Failure(e, _, _, _) =>
                     fail(r.toString, e)
                     false
             }
         }
     }
 
-    def evalTerm(term: Term): Either[(Throwable, CekResult), CekResult] =
-        val tallyingBudgetSpender = TallyingBudgetSpender(CountingBudgetSpender())
-        val logger = Log()
-        val cekMachine = CekMachine(
-          MachineParams.defaultParams,
-          tallyingBudgetSpender,
-          logger,
-          summon[PlatformSpecific]
-        )
-        val debruijnedTerm = DeBruijn.deBruijnTerm(term)
-        try
-            cekMachine.evaluateTerm(debruijnedTerm)
-            val budget = tallyingBudgetSpender.budgetSpender.getSpentBudget
-            Right(CekResult(budget, logger.getLogs.toSeq))
-        catch
-            case NonFatal(e) =>
-                val budget = tallyingBudgetSpender.budgetSpender.getSpentBudget
-                Left((e, CekResult(budget, logger.getLogs.toSeq)))
-
     def evalBondValidator[A](
         bondConfig: BondConfig,
         withdraw: BondAction,
         signatures: Seq[PubKeyHash]
-    )(pf: PartialFunction[Either[(Throwable, CekResult), CekResult], A]): A = {
+    )(pf: PartialFunction[eval.Result, A]): A = {
         val datum = bondConfig.toData
         val redeemer = withdraw.toData
         val scriptContext = makeScriptContext(datum, redeemer, signatures)
         val term = bondValidator $ datum $ redeemer $ scriptContext.toData
-        val result = evalTerm(term)
+        val result = VM.evaluateDebug(term)
         pf(result)
     }
-
-    private def showBudget(budget: ExBudget): String =
-        s"%.6f / %.6f".format(budget.cpu / 1000000d, budget.memory / 1000000d)
-
-    private def showTallyingBudgetSpender(tallyingBudgetSpender: TallyingBudgetSpender): String =
-        tallyingBudgetSpender.costs.toArray
-            .sortBy(_._1.toString())
-            .map { case (k, v) =>
-                s"$k: ${showBudget(v)}"
-            }
-            .mkString("\n")
 
     test("calculateFileIdAndEncId") {
         val (fileId, encId) =
@@ -266,12 +237,12 @@ class ContractTests extends munit.ScalaCheckSuite {
 
     test("xorBytes performance") {
         val term = xorBytesScript $ BigInt(1) $ BigInt(2)
-        val result = evalTerm(term)
+        val result = VM.evaluateDebug(term)
         result match
-            case Right(r) =>
+            case r: eval.Result.Success =>
                 assertEquals(r.budget.cpu, 31_043509L)
                 assertEquals(r.budget.memory, 55706L)
-            case Left((e, r)) => fail(s"Consumed ${showBudget(r.budget)}", e)
+            case r @ eval.Result.Failure(e, _, _, _) => fail(s"Consumed ${r.budget.showJson}", e)
     }
 
     property("BondContract.xorBytes is the same as BigInt.xor") {
