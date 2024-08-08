@@ -86,7 +86,7 @@ class ContractTests extends munit.ScalaCheckSuite {
     )
 
     test(s"bondProgram size is ${bondProgram.doubleCborEncoded.length}") {
-        assertEquals(bondProgram.doubleCborEncoded.length, 1221)
+        assertEquals(bondProgram.doubleCborEncoded.length, 1190)
     }
 
     test(s"htlcProgram size is ${htlcProgram.doubleCborEncoded.length}") {
@@ -101,8 +101,8 @@ class ContractTests extends munit.ScalaCheckSuite {
           Seq(PubKeyHash(bondConfig.serverPubKeyHash))
         ) {
             case eval.Result.Success(_, budget, _, logs) =>
-                assertEquals(budget.cpu, 11_364508L)
-                assertEquals(budget.memory, 32992L)
+                assertEquals(budget.cpu, 10_968166L)
+                assertEquals(budget.memory, 32160L)
             case res @ eval.Result.Failure(ex, _, _, _) =>
                 fail(res.toString, ex)
         }

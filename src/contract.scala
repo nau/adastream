@@ -199,46 +199,59 @@ object BondContract {
       */
     def bondContractValidator(datum: Data, redeemer: Data, ctxData: Data): Unit = {
         datum.to[BondConfig] match
-            case BondConfig(passwordHash, encId, serverPubKey, serverPubKeyHash) =>
-                log("fromData[BondConfig]")
-                val result = redeemer.to[BondAction] match {
-                    case BondAction.Withdraw(password) =>
-                        log("BondAction.Withdraw(preimage)")
-                        // get PubKeyHash as a ByteString from the first signatory
-                        // NOTE: we assume that the first signatory is the server
-                        val pkh = ctxData
-                            .field[ScriptContext](_.txInfo.signatories)
-                            .toList
-                            .head
-                            .toByteString
-                        // verify that the signatory is the server PubKeyHash from the BondConfig
-                        val verifySignature = pkh == serverPubKeyHash
-                        // verify that the password is the correct preimage of the passwordHash
-                        val verifyValidPreimage = verifyPreimage(password, passwordHash)
-                        // return true if both conditions are met
-                        verifySignature.? && verifyValidPreimage.?
-                    case BondAction.FraudProof(
-                          signature,
-                          preimage,
-                          encryptedChunk,
-                          chunkHash,
-                          chunkIndex,
-                          merkleProof
-                        ) =>
-                        log("BondAction.FraudProof")
-                        verifyFraudProof(
-                          chunkHash,
-                          chunkIndex,
-                          encId,
-                          encryptedChunk,
-                          merkleProof,
-                          preimage,
-                          passwordHash,
-                          serverPubKey,
-                          signature
-                        )
-                }
-                if result then () else throw new Exception()
+            case BondConfig(passwordHash, encryptedId, serverPubKey, serverPubKeyHash) =>
+                if bondContractCheck(
+                      redeemer.to[BondAction],
+                      passwordHash,
+                      encryptedId,
+                      serverPubKey,
+                      serverPubKeyHash,
+                      // get PubKeyHash as a ByteString from the first signatory
+                      // NOTE: we assume that the first signatory is the server
+                      ctxData.field[ScriptContext](_.txInfo.signatories).toList
+                    )
+                then ()
+                else throw new Exception()
+    }
+
+    private inline def bondContractCheck(
+        bondAction: BondAction,
+        passwordHash: ByteString,
+        encryptedId: ByteString,
+        serverPubKey: ByteString,
+        serverPubKeyHash: ByteString,
+        signatures: builtin.List[Data]
+    ): Boolean = {
+        bondAction match {
+            case BondAction.Withdraw(password) =>
+                log("BondAction.Withdraw(preimage)")
+                // verify that the signatory is the server PubKeyHash from the BondConfig
+                val verifySignature = signatures.head.toByteString == serverPubKeyHash
+                // verify that the password is the correct preimage of the passwordHash
+                val verifyValidPreimage = verifyPreimage(password, passwordHash)
+                // return true if both conditions are met
+                verifySignature.? && verifyValidPreimage.?
+            case BondAction.FraudProof(
+                  signature,
+                  preimage,
+                  encryptedChunk,
+                  chunkHash,
+                  chunkIndex,
+                  merkleProof
+                ) =>
+                log("BondAction.FraudProof")
+                verifyFraudProof(
+                  chunkHash,
+                  chunkIndex,
+                  encryptedId,
+                  encryptedChunk,
+                  merkleProof,
+                  preimage,
+                  passwordHash,
+                  serverPubKey,
+                  signature
+                )
+        }
     }
 
     /** Hash-Time Locked Contract validator
