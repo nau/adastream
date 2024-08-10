@@ -85,12 +85,12 @@ class AppCtx(
 val ps: PlatformSpecific = summon[PlatformSpecific]
 private val compiledBondScript =
     compile(BondContract.bondContractValidator) |> RemoveRecursivity.apply
-val bondValidator: Term = compiledBondScript.toUplc(generateErrorTraces = true)
+val bondValidator: Term = compiledBondScript.toUplcOptimized(generateErrorTraces = true)
 val bondProgram: Program = Program((1, 0, 0), bondValidator)
 private val compiledHtlcScript =
     compile(BondContract.makeHtlcContractValidator) |> RemoveRecursivity.apply
-val xorBytesScript: Term = compile(BondContract.xorBytes).toUplc(generateErrorTraces = true)
-private val htlcValidator = compiledHtlcScript.toUplc(generateErrorTraces = true)
+val xorBytesScript: Term = compile(BondContract.xorBytes).toUplcOptimized(generateErrorTraces = true)
+private val htlcValidator = compiledHtlcScript.toUplcOptimized(generateErrorTraces = true)
 private val htlcProgram = Program((1, 0, 0), htlcValidator)
 
 lazy val ctx = AppCtx(

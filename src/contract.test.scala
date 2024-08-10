@@ -27,6 +27,7 @@ import org.scalacheck.Arbitrary
 import org.scalacheck.Gen
 import org.scalacheck.Prop.*
 import org.scalacheck.Shrink
+import scalus.*
 import scalus.bloxbean.Interop
 import scalus.bloxbean.SlotConfig
 import scalus.builtin.ByteString
@@ -86,11 +87,11 @@ class ContractTests extends munit.ScalaCheckSuite {
     )
 
     test(s"bondProgram size is ${bondProgram.doubleCborEncoded.length}") {
-        assertEquals(bondProgram.doubleCborEncoded.length, 1190)
+        assertEquals(bondProgram.doubleCborEncoded.length, 1179)
     }
 
     test(s"htlcProgram size is ${htlcProgram.doubleCborEncoded.length}") {
-        assertEquals(htlcProgram.doubleCborEncoded.length, 393)
+        assertEquals(htlcProgram.doubleCborEncoded.length, 391)
     }
 
     test("Server can withdraw with valid preimage and signature") {
@@ -101,8 +102,8 @@ class ContractTests extends munit.ScalaCheckSuite {
           Seq(PubKeyHash(bondConfig.serverPubKeyHash))
         ) {
             case eval.Result.Success(_, budget, _, logs) =>
-                assertEquals(budget.cpu, 10_968166L)
-                assertEquals(budget.memory, 32160L)
+                assertEquals(budget.cpu, 10_646166L)
+                assertEquals(budget.memory, 30_760L)
             case res @ eval.Result.Failure(ex, _, _, _) =>
                 fail(res.toString, ex)
         }
@@ -240,8 +241,8 @@ class ContractTests extends munit.ScalaCheckSuite {
         val result = VM.evaluateDebug(term)
         result match
             case r: eval.Result.Success =>
-                assertEquals(r.budget.cpu, 31_043509L)
-                assertEquals(r.budget.memory, 55706L)
+                assertEquals(r.budget.cpu, 30_859509L)
+                assertEquals(r.budget.memory, 54906L)
             case r @ eval.Result.Failure(e, _, _, _) => fail(s"Consumed ${r.budget.showJson}", e)
     }
 
