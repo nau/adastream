@@ -13,6 +13,6 @@
 //> using dep com.softwaremill.sttp.tapir::tapir-netty-server-sync:1.11.1
 //> using dep com.softwaremill.sttp.tapir::tapir-swagger-ui-bundle:1.11.1
 //> using dep com.monovore::decline:2.4.1
-//> using test.dep org.scalameta::munit::1.0.0
+//> using test.dep org.scalameta::munit::1.0.1
 //> using test.dep org.scalameta::munit-scalacheck::1.0.0
 //> using test.dep org.scalacheck::scalacheck::1.18.0
