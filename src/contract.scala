@@ -61,32 +61,8 @@ object BondContract {
     given FromData[BondConfig] = FromData.deriveCaseClass
     given ToData[BondConfig] = ToData.deriveCaseClass[BondConfig](0)
 
-    given FromData[BondAction] = FromData.deriveEnum {
-        case 0 => FromData.deriveConstructor[BondAction.Withdraw]
-        case 1 => FromData.deriveConstructor[BondAction.FraudProof]
-    }
-    given ToData[BondAction] = (a: BondAction) =>
-        a match
-            case BondAction.Withdraw(preimage) =>
-                constrData(0, preimage.toData :: mkNilData())
-            case BondAction.FraudProof(
-                  signature,
-                  preimage,
-                  encryptedChunk,
-                  chunkHash,
-                  chunkIndex,
-                  merkleProof
-                ) =>
-                constrData(
-                  1,
-                  signature.toData
-                      :: preimage.toData
-                      :: encryptedChunk.toData
-                      :: chunkHash.toData
-                      :: chunkIndex.toData
-                      :: merkleProof
-                      :: mkNilData()
-                )
+    given FromData[BondAction] = FromData.deriveEnum
+    given ToData[BondAction] = ToData.deriveEnum
 
     /** Convert BigInt to ByteString */
     def integerToByteString(num: BigInt): ByteString =

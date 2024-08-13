@@ -87,7 +87,7 @@ class ContractTests extends munit.ScalaCheckSuite {
     )
 
     test(s"bondProgram size is ${bondProgram.doubleCborEncoded.length}") {
-        assertEquals(bondProgram.doubleCborEncoded.length, 1179)
+        assertEquals(bondProgram.doubleCborEncoded.length, 1170)
     }
 
     test(s"htlcProgram size is ${htlcProgram.doubleCborEncoded.length}") {
@@ -102,8 +102,8 @@ class ContractTests extends munit.ScalaCheckSuite {
           Seq(PubKeyHash(bondConfig.serverPubKeyHash))
         ) {
             case eval.Result.Success(_, budget, _, logs) =>
-                assertEquals(budget.cpu, 10_646166L)
-                assertEquals(budget.memory, 30_760L)
+                assertEquals(budget.cpu, 10439166L)
+                assertEquals(budget.memory, 29860L)
             case res @ eval.Result.Failure(ex, _, _, _) =>
                 fail(res.toString, ex)
         }
@@ -364,18 +364,7 @@ class ContractTests extends munit.ScalaCheckSuite {
             )
             .build()
 
-        val purpose = Interop.getScriptPurpose(
-          rdmr,
-          tx.getBody().getInputs(),
-          util.List.of(),
-          util.List.of(),
-          util.List.of()
-        )
-        val datumCbor = ByteString.fromArray(Cbor.encode(datum).toByteArray)
-        val datumHash = crypto.blake2b_256(datumCbor)
-        val datums = Seq((datumHash, datum))
         val protocolVersion = 8
-        val txInfo = Interop.getTxInfoV2(tx, datums, utxo, SlotConfig.default, protocolVersion)
-        val scriptContext = ScriptContext(txInfo, purpose)
+        val scriptContext = Interop.getScriptContextV2(rdmr, tx, utxo, protocolVersion)
         scriptContext
 }
