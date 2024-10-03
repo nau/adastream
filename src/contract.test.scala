@@ -2,22 +2,16 @@ package adastream
 
 import adastream.BondContract.BondAction
 import adastream.BondContract.BondConfig
-import com.bloxbean.cardano.client.backend.blockfrost.service.http.TransactionApi
 import com.bloxbean.cardano.client.common.ADAConversionUtil
-import com.bloxbean.cardano.client.function.TxBuilder
 import com.bloxbean.cardano.client.plutus.spec.ExUnits
-import com.bloxbean.cardano.client.plutus.spec.PlutusV2Script
 import com.bloxbean.cardano.client.plutus.spec.Redeemer
 import com.bloxbean.cardano.client.plutus.spec.RedeemerTag
-import com.bloxbean.cardano.client.quicktx.QuickTxBuilder
-import com.bloxbean.cardano.client.quicktx.ScriptTx
 import com.bloxbean.cardano.client.transaction.spec
 import com.bloxbean.cardano.client.transaction.spec.Transaction
 import com.bloxbean.cardano.client.transaction.spec.TransactionBody
 import com.bloxbean.cardano.client.transaction.spec.TransactionInput
 import com.bloxbean.cardano.client.transaction.spec.TransactionOutput
 import com.bloxbean.cardano.client.transaction.spec.TransactionWitnessSet
-import io.bullet.borer.Cbor
 import org.bouncycastle.crypto.AsymmetricCipherKeyPair
 import org.bouncycastle.crypto.generators.Ed25519KeyPairGenerator
 import org.bouncycastle.crypto.params.Ed25519KeyGenerationParameters
@@ -31,7 +25,6 @@ import scalus.*
 import scalus.bloxbean.Interop
 import scalus.bloxbean.SlotConfig
 import scalus.builtin.ByteString
-import scalus.builtin.ByteString.StringInterpolators
 import scalus.builtin.Data
 import scalus.builtin.Data.toData
 import scalus.builtin.PlatformSpecific
@@ -39,17 +32,11 @@ import scalus.builtin.ToDataInstances.given
 import scalus.builtin.given
 import scalus.ledger.api.v2.*
 import scalus.ledger.api.v2.ToDataInstances.given
-import scalus.prelude
-import scalus.uplc.DeBruijn
-import scalus.uplc.Program
-import scalus.uplc.Term
 import scalus.uplc.TermDSL.{*, given}
-import scalus.uplc.UplcParser
 import scalus.uplc.eval
 import scalus.uplc.eval.*
 import scalus.utils.Utils
 
-import java.io.ByteArrayInputStream
 import java.math.BigInteger
 import java.nio.file.Path
 import java.security.SecureRandom
@@ -57,7 +44,6 @@ import java.util
 import scala.collection.immutable.ArraySeq
 import scala.jdk.CollectionConverters.*
 import scala.language.implicitConversions
-import scala.util.control.NonFatal
 
 case class CekResult(budget: ExBudget, logs: Seq[String])
 
@@ -102,7 +88,7 @@ class ContractTests extends munit.ScalaCheckSuite {
           Seq(PubKeyHash(bondConfig.serverPubKeyHash))
         ) {
             case eval.Result.Success(_, budget, _, logs) =>
-                assertEquals(budget.cpu, 10439166L)
+                assertEquals(budget.cpu, 8235962L)
                 assertEquals(budget.memory, 29860L)
             case res @ eval.Result.Failure(ex, _, _, _) =>
                 fail(res.toString, ex)
@@ -241,7 +227,7 @@ class ContractTests extends munit.ScalaCheckSuite {
         val result = VM.evaluateDebug(term)
         result match
             case r: eval.Result.Success =>
-                assertEquals(r.budget.cpu, 30_859509L)
+                assertEquals(r.budget.cpu, 18_468202L)
                 assertEquals(r.budget.memory, 54906L)
             case r @ eval.Result.Failure(e, _, _, _) => fail(s"Consumed ${r.budget.showJson}", e)
     }
@@ -320,7 +306,7 @@ class ContractTests extends munit.ScalaCheckSuite {
                 .builder()
                 .tag(RedeemerTag.Spend)
                 .data(Interop.toPlutusData(redeemer))
-                .index(BigInteger.valueOf(0))
+                .index(0)
                 .exUnits(
                   ExUnits
                       .builder()
@@ -364,7 +350,7 @@ class ContractTests extends munit.ScalaCheckSuite {
             )
             .build()
 
-        val protocolVersion = 8
-        val scriptContext = Interop.getScriptContextV2(rdmr, tx, utxo, protocolVersion)
+        val protocolVersion = 9
+        val scriptContext = Interop.getScriptContextV2(rdmr, tx, utxo, SlotConfig.Mainnet, protocolVersion)
         scriptContext
 }

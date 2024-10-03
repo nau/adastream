@@ -4,20 +4,15 @@ import adastream.Encryption.chunksFromInputStream
 import scalus.builtin.Builtins.sha2_256
 import scalus.builtin.{ByteString, given}
 import sttp.tapir.*
-import sttp.tapir.server.netty.sync.{NettySyncServer}
+import sttp.tapir.server.netty.sync.NettySyncServer
 import sttp.tapir.swagger.bundle.SwaggerInterpreter
-import sttp.tapir.files.*
 
 import java.nio.file.{Files, Path, StandardOpenOption}
 import scala.util.Using
-import com.bloxbean.cardano.client.crypto.cip1852.CIP1852
-import com.bloxbean.cardano.client.crypto.cip1852.DerivationPath
 import com.bloxbean.cardano.client.crypto.bip32.HdKeyPair
 import com.bloxbean.cardano.client.crypto.config.CryptoConfiguration
 import java.io.InputStream
 import java.io.File
-import scala.util.Failure
-import scala.util.Success
 import scala.util.Try
 
 class Server(

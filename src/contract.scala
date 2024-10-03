@@ -6,21 +6,17 @@ import scalus.builtin.ByteString
 import scalus.builtin.Data
 import scalus.builtin.Data.FromData
 import scalus.builtin.Data.ToData
-import scalus.builtin.Data.fromData
-import scalus.builtin.Data.toData
 import scalus.builtin.FromData
 import scalus.builtin.List
 import scalus.builtin.ToData
 import scalus.builtin.ToDataInstances.given
 import scalus.builtin.given
-import scalus.ledger.api.v1.Extended
 import scalus.ledger.api.v1.FromDataInstances.given
 import scalus.ledger.api.v1.IntervalBoundType
 import scalus.ledger.api.v2.*
 import scalus.prelude.?
 import scalus.prelude.Prelude.log
 import scalus.utils.Utils
-import scalus.ledger.api.v1.IntervalBound
 
 extension (a: Array[Byte]) def toHex: String = Utils.bytesToHex(a)
 
