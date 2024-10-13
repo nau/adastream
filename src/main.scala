@@ -83,12 +83,12 @@ val ps: PlatformSpecific = summon[PlatformSpecific]
 private val compiledBondScript =
     compile(BondContract.bondContractValidator) |> RemoveRecursivity.apply
 val bondValidator: Term = compiledBondScript.toUplcOptimized(generateErrorTraces = true)
-val bondProgram: Program = Program((1, 0, 0), bondValidator)
+val bondProgram: Program = Program((1, 1, 0), bondValidator)
 private val compiledHtlcScript =
     compile(BondContract.makeHtlcContractValidator) |> RemoveRecursivity.apply
 val xorBytesScript: Term = compile(BondContract.xorBytes).toUplcOptimized(generateErrorTraces = true)
 private val htlcValidator = compiledHtlcScript.toUplcOptimized(generateErrorTraces = true)
-private val htlcProgram = Program((1, 0, 0), htlcValidator)
+private val htlcProgram = Program((1, 1, 0), htlcValidator)
 
 lazy val ctx = AppCtx(
   network = Networks.preview(),

@@ -12,6 +12,7 @@ import com.bloxbean.cardano.client.transaction.spec.TransactionBody
 import com.bloxbean.cardano.client.transaction.spec.TransactionInput
 import com.bloxbean.cardano.client.transaction.spec.TransactionOutput
 import com.bloxbean.cardano.client.transaction.spec.TransactionWitnessSet
+import com.bloxbean.cardano.client.transaction.util.TransactionUtil
 import org.bouncycastle.crypto.AsymmetricCipherKeyPair
 import org.bouncycastle.crypto.generators.Ed25519KeyPairGenerator
 import org.bouncycastle.crypto.params.Ed25519KeyGenerationParameters
@@ -23,6 +24,9 @@ import org.scalacheck.Prop.*
 import org.scalacheck.Shrink
 import scalus.*
 import scalus.bloxbean.Interop
+import scalus.bloxbean.Interop.getScriptInfoV3
+import scalus.bloxbean.Interop.getTxInfoV3
+import scalus.bloxbean.Interop.toScalusData
 import scalus.bloxbean.SlotConfig
 import scalus.builtin.ByteString
 import scalus.builtin.Data
@@ -30,8 +34,8 @@ import scalus.builtin.Data.toData
 import scalus.builtin.PlatformSpecific
 import scalus.builtin.ToDataInstances.given
 import scalus.builtin.given
-import scalus.ledger.api.v2.*
-import scalus.ledger.api.v2.ToDataInstances.given
+import scalus.ledger.api.v3.*
+import scalus.ledger.api.v3.ToDataInstances.given
 import scalus.uplc.TermDSL.{*, given}
 import scalus.uplc.eval
 import scalus.uplc.eval.*
@@ -73,11 +77,11 @@ class ContractTests extends munit.ScalaCheckSuite {
     )
 
     test(s"bondProgram size is ${bondProgram.doubleCborEncoded.length}") {
-        assertEquals(bondProgram.doubleCborEncoded.length, 1170)
+        assertEquals(bondProgram.doubleCborEncoded.length, 1247)
     }
 
     test(s"htlcProgram size is ${htlcProgram.doubleCborEncoded.length}") {
-        assertEquals(htlcProgram.doubleCborEncoded.length, 391)
+        assertEquals(htlcProgram.doubleCborEncoded.length, 396)
     }
 
     test("Server can withdraw with valid preimage and signature") {
@@ -88,8 +92,8 @@ class ContractTests extends munit.ScalaCheckSuite {
           Seq(PubKeyHash(bondConfig.serverPubKeyHash))
         ) {
             case eval.Result.Success(_, budget, _, logs) =>
-                assertEquals(budget.cpu, 8235962L)
-                assertEquals(budget.memory, 29860L)
+                assertEquals(budget.cpu, 11406676L)
+                assertEquals(budget.memory, 38472L)
             case res @ eval.Result.Failure(ex, _, _, _) =>
                 fail(res.toString, ex)
         }
@@ -160,7 +164,6 @@ class ContractTests extends munit.ScalaCheckSuite {
                 val encHash = Utils.sha2_256(encrypted ++ hash)
                 hashes += ByteString.fromArray(hash)
                 encHashes += ByteString.fromArray(encHash)
-            val fileId = MerkleTree.fromHashes(hashes.result()).getMerkleRoot
             val merkleTree = MerkleTree.fromHashes(encHashes.result())
             val encId = merkleTree.getMerkleRoot
             val bondConfig = BondConfig(
@@ -186,7 +189,7 @@ class ContractTests extends munit.ScalaCheckSuite {
 
             evalBondValidator(bondConfig, action, Seq.empty) {
                 case eval.Result.Success(_, budget, _, _) =>
-                    assert(budget.cpu < 2_000_000000L)
+                    assert(budget.cpu < 700_000000L)
                     assert(budget.memory < 3_000000L)
                     true
                 case r @ eval.Result.Failure(e, _, _, _) =>
@@ -204,8 +207,8 @@ class ContractTests extends munit.ScalaCheckSuite {
         val datum = bondConfig.toData
         val redeemer = withdraw.toData
         val scriptContext = makeScriptContext(datum, redeemer, signatures)
-        val term = bondValidator $ datum $ redeemer $ scriptContext.toData
-        val result = VM.evaluateDebug(term)
+        val term = bondValidator $ scriptContext.toData
+        val result = VM.evaluateDebug(term, MachineParams.defaultPlutusV3Params)
         pf(result)
     }
 
@@ -218,7 +221,7 @@ class ContractTests extends munit.ScalaCheckSuite {
         )
         assertEquals(
           encId.toHex,
-          "065d1ebc27e1390c56d5c05275a1fc741f8256e181462605bb76faa94b1d34c3"
+          "9e2081ec8a554e49f4c4be05af50a5b07f00567bf8f83329df10cd7ac18ead4a"
         )
     }
 
@@ -258,7 +261,7 @@ class ContractTests extends munit.ScalaCheckSuite {
 
     property("integerToByteString is correct") {
         forAll { (n: Int) =>
-            val positive = n & 0x7fffffff
+            val positive = (n & 0x7ffffffe) + 1 // make it always positive
             val bs = BondContract.integerToByteString(positive)
             val bi = BigInt.apply(bs.toHex, 16)
             bi == positive
@@ -293,6 +296,25 @@ class ContractTests extends munit.ScalaCheckSuite {
             val result = MerkleTree.calculateMerkleRootFromProof(index, elements(index), proof)
             assert(result == root)
         }
+    }
+
+    def getScriptContextV3(
+        redeemer: Redeemer,
+        datum: Option[Data],
+        tx: Transaction,
+        txhash: String,
+        utxos: Map[TransactionInput, TransactionOutput],
+        slotConfig: SlotConfig,
+        protocolVersion: Int
+    ): ScriptContext = {
+        import scala.jdk.CollectionConverters.*
+        val scriptInfo = getScriptInfoV3(tx, redeemer, datum)
+        val datums = tx.getWitnessSet.getPlutusDataList.asScala.map { plutusData =>
+            ByteString.fromArray(plutusData.getDatumHashAsBytes) -> Interop.toScalusData(plutusData)
+        }
+        val txInfo = getTxInfoV3(tx, txhash, datums, utxos, slotConfig, protocolVersion)
+        val scriptContext = ScriptContext(txInfo, toScalusData(redeemer.getData), scriptInfo)
+        scriptContext
     }
 
     def makeScriptContext(
@@ -351,6 +373,14 @@ class ContractTests extends munit.ScalaCheckSuite {
             .build()
 
         val protocolVersion = 9
-        val scriptContext = Interop.getScriptContextV2(rdmr, tx, utxo, SlotConfig.Mainnet, protocolVersion)
+        val scriptContext = getScriptContextV3(
+          rdmr,
+          Some(datum),
+          tx,
+          TransactionUtil.getTxHash(tx),
+          utxo,
+          SlotConfig.Mainnet,
+          protocolVersion
+        )
         scriptContext
 }

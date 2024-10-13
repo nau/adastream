@@ -1,6 +1,7 @@
 package adastream
 
 import scalus.*
+import scalus.builtin.Builtins
 import scalus.builtin.Builtins.*
 import scalus.builtin.ByteString
 import scalus.builtin.Data
@@ -12,9 +13,9 @@ import scalus.builtin.ToData
 import scalus.builtin.ToDataInstances.given
 import scalus.builtin.given
 import scalus.ledger.api.v1.FromDataInstances.given
-import scalus.ledger.api.v1.IntervalBoundType
-import scalus.ledger.api.v2.*
+import scalus.ledger.api.v3.*
 import scalus.prelude.?
+import scalus.prelude.Maybe
 import scalus.prelude.Prelude.log
 import scalus.utils.Utils
 
@@ -62,13 +63,8 @@ object BondContract {
 
     /** Convert BigInt to ByteString */
     def integerToByteString(num: BigInt): ByteString =
-        def loop(div: BigInt, result: ByteString): ByteString = {
-            val shifted = num / div
-            val newResult = consByteString(shifted % 256, result)
-            if shifted == BigInt(0) then newResult
-            else loop(div * 256, newResult)
-        }
-        loop(1, ByteString.empty)
+        if num <= BigInt(0) then throw new Exception(s"Number must be positive")
+        else Builtins.integerToByteString(true, 0, num)
 
     def xorBytes(a: BigInt, b: BigInt): BigInt = {
         def xorHelper(a: BigInt, b: BigInt, pow: BigInt, result: BigInt): BigInt = {
@@ -132,7 +128,7 @@ object BondContract {
         signature: ByteString
     ): Boolean =
         val verifyWrongChunkHash =
-            val preimageAndIndex = appendByteString(preimage, integerToByteString(chunkIndex))
+            val preimageAndIndex = appendByteString(preimage, integerToByteString(chunkIndex + 1))
             // hash( Ei ⊕ hash( preimage || i) ) ≠ Hi
             val expectedChunkHash = sha2_256(xor(encryptedChunk, sha2_256(preimageAndIndex)))
             expectedChunkHash != chunkHash
@@ -169,21 +165,29 @@ object BondContract {
       * @param ctxData
       *   ScriptContext
       */
-    def bondContractValidator(datum: Data, redeemer: Data, ctxData: Data): Unit = {
-        datum.to[BondConfig] match
-            case BondConfig(passwordHash, encryptedId, serverPubKey, serverPubKeyHash) =>
-                if bondContractCheck(
-                      redeemer.to[BondAction],
-                      passwordHash,
-                      encryptedId,
-                      serverPubKey,
-                      serverPubKeyHash,
-                      // get PubKeyHash as a ByteString from the first signatory
-                      // NOTE: we assume that the first signatory is the server
-                      ctxData.field[ScriptContext](_.txInfo.signatories).toList
-                    )
-                then ()
-                else throw new Exception()
+    def bondContractValidator(ctxData: Data): Unit = {
+        val bondAction = ctxData.field[ScriptContext](_.redeemer).to[BondAction]
+        val info = ctxData.field[ScriptContext](_.scriptInfo)
+        val infoPair = info.toConstr
+        if infoPair.fst == BigInt(1) then // SpendingScript
+            val datum = info.field[ScriptInfo.SpendingScript](_.datum).to[Maybe[BondConfig]]
+            datum match
+                case Maybe.Just(
+                      BondConfig(passwordHash, encryptedId, serverPubKey, serverPubKeyHash)
+                    ) =>
+                    if bondContractCheck(
+                          bondAction,
+                          passwordHash,
+                          encryptedId,
+                          serverPubKey,
+                          serverPubKeyHash,
+                          // get PubKeyHash as a ByteString from the first signatory
+                          // NOTE: we assume that the first signatory is the server
+                          ctxData.field[ScriptContext](_.txInfo.signatories).toList
+                        )
+                    then ()
+                    else throw new Exception()
+                case _ => throw new Exception("No datum")
     }
 
     private inline def bondContractCheck(
@@ -232,11 +236,13 @@ object BondContract {
         clientPubKeyHash: Data,
         expiration: PosixTime,
         hash: ByteString
-    )(datum: Data, redeemer: Data, ctxData: Data): Unit = {
+    )(ctxData: Data): Unit = {
+        val redeemer = ctxData.field[ScriptContext](_.redeemer)
         val validPreimage = hash == sha2_256(redeemer.toByteString)
         val expired = {
             val txInfoData = ctxData.field[ScriptContext](_.txInfo)
-            val txtime = txInfoData.field[TxInfo](_.validRange.from.boundType).to[IntervalBoundType]
+            val txtime =
+                txInfoData.field[TxInfo](_.validRange.from.boundType).to[IntervalBoundType]
             txtime match
                 case IntervalBoundType.Finite(txtime) =>
                     val expired = expiration < txtime

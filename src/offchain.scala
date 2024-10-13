@@ -58,7 +58,9 @@ class MerkleTreeRootBuilder {
             levels.last
 }
 
-class MerkleTree(private val levels: ArrayBuffer[ArrayBuffer[ByteString]]) {
+class MerkleTree(private val levels: collection.IndexedSeq[collection.IndexedSeq[ByteString]]) {
+    assert(levels.nonEmpty)
+
     def getMerkleRoot: ByteString = {
         levels.last.head
     }
@@ -155,7 +157,12 @@ object Encryption {
         hasher.doFinal(hash, 0)
 
         // XOR each byte of the chunk with the hash
-        chunk.zip(hash).map { case (chunkByte, hashByte) => (chunkByte ^ hashByte).toByte }
+        var i = 0
+        val result = new Array[Byte](chunk.length)
+        while i < chunk.length do
+            result(i) = (chunk(i) ^ hash(i)).toByte
+            i += 1
+        result
     }
 
     def decryptChunk(chunk: Array[Byte], secret: Array[Byte], index: Int): Array[Byte] = {
