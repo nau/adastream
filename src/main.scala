@@ -34,6 +34,10 @@ import scalus.builtin.PlatformSpecific
 import scalus.builtin.given
 import scalus.ledger.api.v2.*
 import scalus.sir.RemoveRecursivity
+import scalus.uplc.Constant
+import scalus.uplc.DefaultFun
+import scalus.uplc.NamedDeBruijn
+import scalus.uplc.Inliner
 import scalus.uplc.Program
 import scalus.uplc.Term
 import scalus.utils.Utils
@@ -82,11 +86,45 @@ class AppCtx(
 val ps: PlatformSpecific = summon[PlatformSpecific]
 private val compiledBondScript =
     compile(BondContract.bondContractValidator) |> RemoveRecursivity.apply
-val bondValidator: Term = compiledBondScript.toUplcOptimized(generateErrorTraces = true)
+
+def removeDebugTraces(term: Term): Term =
+    import Term.*
+
+    def go(t: Term): Term = t match
+        case Apply(
+              Apply(Var(NamedDeBruijn("__builtin_Trace", _)), Const(_)),
+              const @ Const(Constant.Unit)
+            ) =>
+            println(s"Removing debug trace: ${t.showHighlighted}")
+            const
+        case Apply(f, a)       => Apply(go(f), go(a))
+        case LamAbs(n, b)      => LamAbs(n, go(b))
+        case Force(t)          => Force(go(t))
+        case Delay(t)          => Delay(go(t))
+        case Case(s, cs)       => Case(go(s), cs.map(go))
+        case Constr(tag, args) => Constr(tag, args.map(go))
+        case t                 => t
+
+    go(term)
+
+def inliner(t: Term): Term = {
+    val (result, logs) = Inliner.inlinePass(Inliner.inlineConstAndVar)(t)
+    logs.foreach(println)
+    result
+}
+
+val bondValidator: Term =
+    println(compiledBondScript.showHighlighted)
+    val term = compiledBondScript.toUplcOptimized(generateErrorTraces = true)
+        |> removeDebugTraces |> inliner
+    term
+
 val bondProgram: Program = Program((1, 1, 0), bondValidator)
+
 private val compiledHtlcScript =
     compile(BondContract.makeHtlcContractValidator) |> RemoveRecursivity.apply
-val xorBytesScript: Term = compile(BondContract.xorBytes).toUplcOptimized(generateErrorTraces = true)
+val xorBytesScript: Term =
+    compile(BondContract.xorBytes).toUplcOptimized(generateErrorTraces = true)
 private val htlcValidator = compiledHtlcScript.toUplcOptimized(generateErrorTraces = true)
 private val htlcProgram = Program((1, 1, 0), htlcValidator)
 
