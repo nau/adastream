@@ -1,45 +1,28 @@
 package adastream
-import adastream.BondContract.BondAction
-import adastream.BondContract.BondConfig
+import adastream.BondContract.{BondAction, BondConfig}
 import adastream.Encryption.chunksFromInputStream
 import com.bloxbean.cardano.client.account.Account
 import com.bloxbean.cardano.client.address.AddressProvider
 import com.bloxbean.cardano.client.api.model.Amount
-import com.bloxbean.cardano.client.backend.api.BackendService
-import com.bloxbean.cardano.client.backend.api.DefaultUtxoSupplier
+import com.bloxbean.cardano.client.backend.api.{BackendService, DefaultUtxoSupplier}
 import com.bloxbean.cardano.client.backend.blockfrost.common.Constants
 import com.bloxbean.cardano.client.backend.blockfrost.service.BFBackendService
-import com.bloxbean.cardano.client.common.model.Network
-import com.bloxbean.cardano.client.common.model.Networks
-import com.bloxbean.cardano.client.crypto.cip1852.CIP1852
-import com.bloxbean.cardano.client.crypto.cip1852.DerivationPath
+import com.bloxbean.cardano.client.common.model.{Network, Networks}
+import com.bloxbean.cardano.client.crypto.cip1852.{CIP1852, DerivationPath}
 import com.bloxbean.cardano.client.crypto.config.CryptoConfiguration
-import com.bloxbean.cardano.client.function.helper.ScriptUtxoFinders
-import com.bloxbean.cardano.client.function.helper.SignerProviders
+import com.bloxbean.cardano.client.function.helper.{ScriptUtxoFinders, SignerProviders}
 import com.bloxbean.cardano.client.plutus.spec.*
-import com.bloxbean.cardano.client.quicktx.QuickTxBuilder
-import com.bloxbean.cardano.client.quicktx.ScriptTx
-import com.bloxbean.cardano.client.quicktx.Tx
+import com.bloxbean.cardano.client.quicktx.{QuickTxBuilder, ScriptTx, Tx}
 import com.monovore.decline.*
 import scalus.*
 import scalus.Compiler.compile
-import scalus.bloxbean.Interop
-import scalus.bloxbean.ScalusTransactionEvaluator
+import scalus.bloxbean.{Interop, ScalusTransactionEvaluator}
 import scalus.builtin.Builtins.*
-import scalus.builtin.ByteString
-import scalus.builtin.Data
-import scalus.builtin.Data.ToData
-import scalus.builtin.Data.toData
-import scalus.builtin.PlatformSpecific
-import scalus.builtin.given
+import scalus.builtin.Data.{ToData, toData}
+import scalus.builtin.{ByteString, Data, PlatformSpecific, given}
 import scalus.ledger.api.v2.*
 import scalus.sir.RemoveRecursivity
-import scalus.uplc.Constant
-import scalus.uplc.DefaultFun
-import scalus.uplc.NamedDeBruijn
-import scalus.uplc.Inliner
-import scalus.uplc.Program
-import scalus.uplc.Term
+import scalus.uplc.*
 import scalus.utils.Utils
 
 import java.nio.file.Path
@@ -114,9 +97,10 @@ def inliner(t: Term): Term = {
 }
 
 val bondValidator: Term =
-    println(compiledBondScript.showHighlighted)
+//    println(compiledBondScript.showHighlighted)
     val term = compiledBondScript.toUplcOptimized(generateErrorTraces = true)
-        |> removeDebugTraces |> inliner
+        |> removeDebugTraces
+//    println(term.showHighlighted)
     term
 
 val bondProgram: Program = Program((1, 1, 0), bondValidator)
@@ -440,7 +424,7 @@ enum Cmd:
     case Server(secret: String, uploadDir: Path)
 
 val adastreamCommand =
-    import cats.implicits._
+    import cats.implicits.*
     val infoCommand = Opts.subcommand("info", "Prints the contract info") {
         Opts(Cmd.Info)
     }

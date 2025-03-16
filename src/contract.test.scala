@@ -75,9 +75,10 @@ class ContractTests extends munit.ScalaCheckSuite {
       publicKey,
       crypto.blake2b_224(publicKey)
     )
+    private given PlutusVM = PlutusVM.makePlutusV3VM()
 
     test(s"bondProgram size is ${bondProgram.doubleCborEncoded.length}") {
-        assertEquals(bondProgram.doubleCborEncoded.length, 1087)
+        assertEquals(bondProgram.doubleCborEncoded.length, 1121)
     }
 
     test(s"htlcProgram size is ${htlcProgram.doubleCborEncoded.length}") {
@@ -91,9 +92,9 @@ class ContractTests extends munit.ScalaCheckSuite {
           withdraw,
           Seq(PubKeyHash(bondConfig.serverPubKeyHash))
         ) {
-            case eval.Result.Success(_, budget, _, logs) =>
-                assertEquals(budget.cpu, 11187178L)
-                assertEquals(budget.memory, 37440L)
+            case eval.Result.Success(_, budget, _, _) =>
+                assertEquals(budget.cpu, 11283178L)
+                assertEquals(budget.memory, 38040L)
             case res @ eval.Result.Failure(ex, _, _, _) =>
                 fail(res.toString, ex)
         }
@@ -208,8 +209,7 @@ class ContractTests extends munit.ScalaCheckSuite {
         val redeemer = withdraw.toData
         val scriptContext = makeScriptContext(datum, redeemer, signatures)
         val term = bondValidator $ scriptContext.toData
-        val result = VM.evaluateDebug(term, MachineParams.defaultPlutusV3Params)
-        pf(result)
+        pf(term.evaluateDebug)
     }
 
     test("calculateFileIdAndEncId") {
@@ -227,10 +227,10 @@ class ContractTests extends munit.ScalaCheckSuite {
 
     test("xorBytes performance") {
         val term = xorBytesScript $ BigInt(1) $ BigInt(2)
-        val result = VM.evaluateDebug(term)
+        val result = term.evaluateDebug
         result match
             case r: eval.Result.Success =>
-                assertEquals(r.budget.cpu, 18_468202L)
+                assertEquals(r.budget.cpu, 16_148434L)
                 assertEquals(r.budget.memory, 54906L)
             case r @ eval.Result.Failure(e, _, _, _) => fail(s"Consumed ${r.budget.showJson}", e)
     }

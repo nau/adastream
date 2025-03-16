@@ -63,7 +63,7 @@ object BondContract {
 
     /** Convert BigInt to ByteString */
     def integerToByteString(num: BigInt): ByteString =
-        if num <= BigInt(0) then throw new Exception(s"Number must be positive")
+        if num <= BigInt(0) then throw new Exception("Number must be positive")
         else Builtins.integerToByteString(true, 0, num)
 
     def xorBytes(a: BigInt, b: BigInt): BigInt = {
